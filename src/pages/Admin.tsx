@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { JobList, ScrapeTrigger } from "@/components/admin";
+import { SiteManager } from "@/components/admin/SiteManager";
+import { ScrapingLogs } from "@/components/admin/ScrapingLogs";
 import { useScrapingJobs, useTriggerScrape, useCancelJob } from "@/hooks/useScrapingJobs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Shield, Database, Activity, Settings } from "lucide-react";
+import { Database, Shield, Activity, Settings, Globe, FileText } from "lucide-react";
 
 export default function Admin() {
   const { data: jobs, isLoading } = useScrapingJobs();
@@ -47,7 +49,7 @@ export default function Admin() {
                 <Badge className="bg-blue-100 text-blue-800">Admin Access</Badge>
               </div>
               <p className="text-slate-500">
-                Manage scrapers, monitor jobs, and configure the platform
+                Manage scrapers, sites, monitor jobs, and configure the platform
               </p>
             </div>
 
@@ -114,6 +116,14 @@ export default function Admin() {
                   <Database className="h-4 w-4" />
                   Scraping Jobs
                 </TabsTrigger>
+                <TabsTrigger value="sites" className="gap-2">
+                  <Globe className="h-4 w-4" />
+                  Sites
+                </TabsTrigger>
+                <TabsTrigger value="logs" className="gap-2">
+                  <FileText className="h-4 w-4" />
+                  Logs
+                </TabsTrigger>
                 <TabsTrigger value="trigger" className="gap-2">
                   <Shield className="h-4 w-4" />
                   Trigger Scrape
@@ -124,6 +134,9 @@ export default function Admin() {
                 </TabsTrigger>
               </TabsList>
 
+              {/* ───────────────────────────────────────────── */}
+              {/* TAB: SCRAPING JOBS */}
+              {/* ───────────────────────────────────────────── */}
               <TabsContent value="jobs">
                 <Card>
                   <CardHeader>
@@ -139,6 +152,23 @@ export default function Admin() {
                 </Card>
               </TabsContent>
 
+              {/* ───────────────────────────────────────────── */}
+              {/* TAB: SITES */}
+              {/* ───────────────────────────────────────────── */}
+              <TabsContent value="sites">
+                <SiteManager />
+              </TabsContent>
+
+              {/* ───────────────────────────────────────────── */}
+              {/* TAB: LOGS */}
+              {/* ───────────────────────────────────────────── */}
+              <TabsContent value="logs">
+                <ScrapingLogs />
+              </TabsContent>
+
+              {/* ───────────────────────────────────────────── */}
+              {/* TAB: TRIGGER SCRAPE */}
+              {/* ───────────────────────────────────────────── */}
               <TabsContent value="trigger">
                 <div className="grid md:grid-cols-2 gap-6">
                   <ScrapeTrigger
@@ -186,6 +216,9 @@ export default function Admin() {
                 </div>
               </TabsContent>
 
+              {/* ───────────────────────────────────────────── */}
+              {/* TAB: SETTINGS */}
+              {/* ───────────────────────────────────────────── */}
               <TabsContent value="settings">
                 <Card>
                   <CardHeader>

@@ -101,7 +101,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                   className="flex items-center gap-2 rounded-lg px-3 py-2 bg-emerald-50 text-emerald-700 text-sm"
                 >
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span className="truncate flex-1">{job.source}</span>
+                  <span className="truncate flex-1">{job.site_id}</span>
                 </div>
               ))}
               {pendingJobs.map((job) => (
@@ -110,7 +110,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                   className="flex items-center gap-2 rounded-lg px-3 py-2 bg-amber-50 text-amber-700 text-sm"
                 >
                   <div className="w-2 h-2 rounded-full bg-amber-500" />
-                  <span className="truncate flex-1">{job.source}</span>
+                  <span className="truncate flex-1">{job.site_id}</span>
                 </div>
               ))}
             </div>

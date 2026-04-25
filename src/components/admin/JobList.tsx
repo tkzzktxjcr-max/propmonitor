@@ -10,12 +10,14 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Globe,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { useSites } from "@/hooks/useSites";
 import type { ScrapingJob } from "@/types";
 
 interface JobListProps {
@@ -54,12 +56,20 @@ const triggerLabels = {
   realtime: "Real-time",
 };
 
+// ─────────────────────────────────────────────
+// JOB LIST
+// ─────────────────────────────────────────────
 export function JobList({ jobs, isLoading, onCancelJob }: JobListProps) {
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
+  const { data: sites } = useSites();
 
   const sortedJobs = [...jobs].sort(
     (a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime()
   );
+
+  const getSiteName = (siteId: string) => {
+    return sites?.find((s) => s.$id === siteId)?.name || siteId;
+  };
 
   if (isLoading) {
     return (
@@ -127,7 +137,10 @@ export function JobList({ jobs, isLoading, onCancelJob }: JobListProps) {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold capitalize">{job.source}</span>
+                      <span className="font-semibold flex items-center gap-1.5">
+                        <Globe className="h-4 w-4 text-slate-400" />
+                        {getSiteName(job.site_id)}
+                      </span>
                       <Badge variant="secondary" className="text-xs">
                         {triggerLabels[job.trigger]}
                       </Badge>

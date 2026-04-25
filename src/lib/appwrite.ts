@@ -1,37 +1,69 @@
 import { Client, Account, Databases, Functions, Storage, Teams, ID, Query } from "appwrite";
 
-// Appwrite Configuration
-const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || "https://backend.071098v2.duckdns.org/v1";
-const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || "propertymonitor";
-const APPWRITE_DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID || "real-estate-db";
+// ─────────────────────────────────────────────
+// APPWRITE CONFIGURATION
+// ─────────────────────────────────────────────
+const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
+const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || "belrealty";
+const APPWRITE_DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID || "belrealty-db";
 
-// Collections
-const APPWRITE_COLLECTION_PROPERTIES = import.meta.env.VITE_APPWRITE_COLLECTION_PROPERTIES || "properties";
-const APPWRITE_COLLECTION_SCRAPING_JOBS = import.meta.env.VITE_APPWRITE_COLLECTION_SCRAPING_JOBS || "scraping-jobs";
-const APPWRITE_COLLECTION_USERS = import.meta.env.VITE_APPWRITE_COLLECTION_USERS || "users";
+// ─────────────────────────────────────────────
+// COLLECTIONS IDs
+// ─────────────────────────────────────────────
 
-// Initialize Appwrite client
+// Properties
+export const COLLECTION_PROPERTIES = import.meta.env.VITE_APPWRITE_COLLECTION_PROPERTIES || "properties";
+
+// Scraper
+export const COLLECTION_SITES = import.meta.env.VITE_APPWRITE_COLLECTION_SITES || "scraping_sites";
+export const COLLECTION_JOBS = import.meta.env.VITE_APPWRITE_COLLECTION_JOBS || "scraping_jobs";
+export const COLLECTION_LOGS = import.meta.env.VITE_APPWRITE_COLLECTION_LOGS || "scraping_logs";
+
+// Users
+export const COLLECTION_USERS = import.meta.env.VITE_APPWRITE_COLLECTION_USERS || "users";
+
+// ─────────────────────────────────────────────
+// INITIALIZE CLIENT
+// ─────────────────────────────────────────────
 export const client = new Client()
   .setEndpoint(APPWRITE_ENDPOINT)
   .setProject(APPWRITE_PROJECT_ID);
 
-// Initialize services
+// ─────────────────────────────────────────────
+// SERVICES
+// ─────────────────────────────────────────────
 export const account = new Account(client);
 export const databases = new Databases(client);
 export const functions = new Functions(client);
 export const storage = new Storage(client);
 export const teams = new Teams(client);
 
-// Collection & Database IDs
+// ─────────────────────────────────────────────
+// DATABASE ID
+// ─────────────────────────────────────────────
 export const DATABASE_ID = APPWRITE_DATABASE_ID;
-export const COLLECTION_PROPERTIES = APPWRITE_COLLECTION_PROPERTIES;
-export const COLLECTION_JOBS = APPWRITE_COLLECTION_SCRAPING_JOBS;
-export const COLLECTION_USERS = APPWRITE_COLLECTION_USERS;
 
-// Helper to check if Appwrite is configured
-export const isAppwriteConfigured = () => {
-  return APPWRITE_PROJECT_ID !== "propertymonitor";
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+
+/**
+ * Check if Appwrite is properly configured
+ */
+export const isAppwriteConfigured = (): boolean => {
+  const hasEndpoint = APPWRITE_ENDPOINT !== "https://cloud.appwrite.io/v1";
+  const hasProject = APPWRITE_PROJECT_ID !== "belrealty" && APPWRITE_PROJECT_ID !== "";
+  return hasEndpoint && hasProject;
 };
 
-// Re-export helpers
+/**
+ * Check if we're using demo mode (mock data)
+ */
+export const isDemoMode = (): boolean => {
+  return !isAppwriteConfigured();
+};
+
+// ─────────────────────────────────────────────
+// RE-EXPORTS
+// ─────────────────────────────────────────────
 export { ID, Query };
