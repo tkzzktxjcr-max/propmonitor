@@ -3,8 +3,7 @@ import { Client, Account, Databases, Functions, Storage, Teams, ID, Query } from
 // ─────────────────────────────────────────────
 // APPWRITE CONFIGURATION
 // ─────────────────────────────────────────────
-const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
-const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || "propertymonitor";
+const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1/project/propertymonitor";
 const APPWRITE_DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID || "belrealty-db";
 
 // ─────────────────────────────────────────────
@@ -26,8 +25,7 @@ export const COLLECTION_USERS = import.meta.env.VITE_APPWRITE_COLLECTION_USERS |
 // INITIALIZE CLIENT
 // ─────────────────────────────────────────────
 export const client = new Client()
-  .setEndpoint(APPWRITE_ENDPOINT)
-  .setProject(APPWRITE_PROJECT_ID);
+  .setEndpoint(APPWRITE_ENDPOINT);
 
 // ─────────────────────────────────────────────
 // SERVICES
@@ -48,22 +46,19 @@ export const DATABASE_ID = APPWRITE_DATABASE_ID;
 // ─────────────────────────────────────────────
 
 /**
- * Check if Appwrite is properly configured
+ * Check if we're using demo mode (mock data)
+ * Returns true if no real Appwrite endpoint is configured
  */
-export const isAppwriteConfigured = (): boolean => {
-  // Si on utilise le project "propertymonitor" par défaut, on considère que c'est configuré
-  // (en mode dev/demo, on utilise les mocks)
-  const hasProject = APPWRITE_PROJECT_ID !== "" && APPWRITE_PROJECT_ID !== "belrealty";
-  return hasProject;
+export const isDemoMode = (): boolean => {
+  // Check if using the default/mock endpoint
+  return APPWRITE_ENDPOINT.includes("propertymonitor") && !import.meta.env.VITE_APPWRITE_ENDPOINT;
 };
 
 /**
- * Check if we're using demo mode (mock data)
+ * Check if Appwrite is properly configured
  */
-export const isDemoMode = (): boolean => {
-  // Demo mode tant que l'utilisateur n'a pas configuré ses propres variables
-  const usingDefaultProject = APPWRITE_PROJECT_ID === "propertymonitor" && !import.meta.env.VITE_APPWRITE_PROJECT_ID;
-  return usingDefaultProject;
+export const isAppwriteConfigured = (): boolean => {
+  return !!import.meta.env.VITE_APPWRITE_ENDPOINT || !isDemoMode();
 };
 
 // ─────────────────────────────────────────────
