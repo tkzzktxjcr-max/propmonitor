@@ -1,0 +1,15 @@
+{
+  "name": "scraper-engine",
+  "version": "1.0.0",
+  "description": "BelRealty - Core scraping engine with site-specific parsers",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "appwrite deploy function --functionId=scraper-engine"
+  },
+  "dependencies": {
+    "node-appwrite": "^11.0.0",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12"
+  }
+}
