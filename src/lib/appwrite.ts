@@ -4,7 +4,7 @@ import { Client, Account, Databases, Functions, Storage, Teams, ID, Query } from
 // APPWRITE CONFIGURATION
 // ─────────────────────────────────────────────
 const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
-const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || "belrealty";
+const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || "propertymonitor";
 const APPWRITE_DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID || "belrealty-db";
 
 // ─────────────────────────────────────────────
@@ -51,16 +51,19 @@ export const DATABASE_ID = APPWRITE_DATABASE_ID;
  * Check if Appwrite is properly configured
  */
 export const isAppwriteConfigured = (): boolean => {
-  const hasEndpoint = APPWRITE_ENDPOINT !== "https://cloud.appwrite.io/v1";
-  const hasProject = APPWRITE_PROJECT_ID !== "belrealty" && APPWRITE_PROJECT_ID !== "";
-  return hasEndpoint && hasProject;
+  // Si on utilise le project "propertymonitor" par défaut, on considère que c'est configuré
+  // (en mode dev/demo, on utilise les mocks)
+  const hasProject = APPWRITE_PROJECT_ID !== "" && APPWRITE_PROJECT_ID !== "belrealty";
+  return hasProject;
 };
 
 /**
  * Check if we're using demo mode (mock data)
  */
 export const isDemoMode = (): boolean => {
-  return !isAppwriteConfigured();
+  // Demo mode tant que l'utilisateur n'a pas configuré ses propres variables
+  const usingDefaultProject = APPWRITE_PROJECT_ID === "propertymonitor" && !import.meta.env.VITE_APPWRITE_PROJECT_ID;
+  return usingDefaultProject;
 };
 
 // ─────────────────────────────────────────────
