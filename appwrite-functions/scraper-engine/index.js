@@ -1,7 +1,5 @@
 /**
  * BelRealty - Scraper Engine
- * 
- * Async function that performs the actual scraping.
  */
 
 const sdk = require("node-appwrite");
@@ -9,7 +7,7 @@ const { getParser } = require("./parsers");
 const { updateJobStatus, addLog, storeProperty } = require("./services/appwrite");
 
 // Configuration
-const APPWRITE_ENDPOINT = process.env.APPWRITE_ENDPOINT || "http://localhost:80/v1";
+const APPWRITE_ENDPOINT = process.env.APPWRITE_ENDPOINT || "https://backend.071098v2.duckdns.org/v1";
 const APPWRITE_PROJECT_ID = process.env.APPWRITE_PROJECT_ID || "propertymonitor";
 const APPWRITE_API_KEY = process.env.APPWRITE_API_KEY;
 const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
