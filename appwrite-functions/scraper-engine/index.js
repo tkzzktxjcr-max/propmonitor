@@ -13,6 +13,10 @@ const APPWRITE_API_KEY = process.env.APPWRITE_API_KEY;
 const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
 
 module.exports = async (req, res) => {
+  console.log("[scraper-engine] Request received");
+  console.log("[scraper-engine] req.body:", req.body);
+  console.log("[scraper-engine] req.payload:", req.payload);
+  
   if (!APPWRITE_API_KEY) {
     return res.json({ success: false, error: "APPWRITE_API_KEY not configured" });
   }
@@ -29,26 +33,41 @@ module.exports = async (req, res) => {
   const COLLECTION_PROPERTIES = "properties";
   const COLLECTION_LOGS = "scraping_logs";
 
+  // Parse payload - try multiple sources
   let payload;
   try {
-    payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  } catch {
+    const rawPayload = req.payload || req.body || req.rawBody || {};
+    console.log("[scraper-engine] Raw payload:", rawPayload);
+    
+    if (typeof rawPayload === "string") {
+      payload = JSON.parse(rawPayload);
+    } else if (typeof rawPayload === "object" && rawPayload !== null) {
+      payload = rawPayload;
+    } else {
+      payload = {};
+    }
+  } catch (e) {
+    console.error("[scraper-engine] Failed to parse payload:", e.message);
     payload = {};
   }
+  
+  console.log("[scraper-engine] Parsed payload:", payload);
 
   const { jobId, siteId, filters = {} } = payload;
 
   if (!jobId || !siteId) {
+    console.error("[scraper-engine] Missing required fields: jobId or siteId");
     return res.json({ success: false, error: "Missing required fields: jobId and siteId" });
   }
 
-  console.log(`Starting scrape job ${jobId} for site ${siteId}`);
+  console.log(`[scraper-engine] Starting scrape job ${jobId} for site ${siteId}`);
 
   try {
     // Get site
     const site = await databases.getDocument(DATABASE_ID, COLLECTION_SITES, siteId);
+    console.log(`[scraper-engine] Found site:`, site.name);
 
-    // Update job status
+    // Update job status to running
     await updateJobStatus(client, DATABASE_ID, COLLECTION_JOBS, jobId, "running");
     await addLog(client, DATABASE_ID, COLLECTION_LOGS, {
       job_id: jobId, site_id: siteId,
@@ -56,7 +75,7 @@ module.exports = async (req, res) => {
       message: `Starting scrape for ${site.name} (${site.base_url})`,
     });
 
-    // Get parser
+    // Get parser for this site
     const parser = getParser(site.slug);
     if (!parser) {
       await updateJobStatus(client, DATABASE_ID, COLLECTION_JOBS, jobId, "failed", {
@@ -68,13 +87,17 @@ module.exports = async (req, res) => {
     let stats = { total_found: 0, new_listings: 0, updated: 0, failed: 0 };
 
     // Scrape listings
+    console.log(`[scraper-engine] Scraping listings from ${site.name}...`);
     const listings = await parser.scrapeListings(site, filters);
+    console.log(`[scraper-engine] Found ${listings.length} listings`);
 
     await addLog(client, DATABASE_ID, COLLECTION_LOGS, {
       job_id: jobId, site_id: siteId,
       level: "INFO",
       message: `Found ${listings.length} listings, starting detailed scrape...`,
     });
+
+    stats.total_found = listings.length;
 
     // Process each listing
     for (const listing of listings) {
@@ -93,6 +116,7 @@ module.exports = async (req, res) => {
         if (result.isNew) stats.new_listings++;
         else if (result.isUpdated) stats.updated++;
 
+        // Rate limiting
         await sleep(site.rate_limit_ms || 2000);
       } catch (error) {
         stats.failed++;
@@ -106,16 +130,20 @@ module.exports = async (req, res) => {
     }
 
     // Update site stats
-    const propertiesCount = await databases.listDocuments(
-      DATABASE_ID, COLLECTION_PROPERTIES,
-      [new sdk.Query().equal("site_id", siteId).limit(0)]
-    );
+    try {
+      const propertiesCount = await databases.listDocuments(
+        DATABASE_ID, COLLECTION_PROPERTIES,
+        [new sdk.Query().equal("site_id", siteId).limit(0)]
+      );
 
-    await databases.updateDocument(DATABASE_ID, COLLECTION_SITES, siteId, {
-      properties_count: propertiesCount.total,
-      last_scrape_at: new Date().toISOString(),
-      last_scrape_status: "success",
-    });
+      await databases.updateDocument(DATABASE_ID, COLLECTION_SITES, siteId, {
+        properties_count: propertiesCount.total,
+        last_scrape_at: new Date().toISOString(),
+        last_scrape_status: "success",
+      });
+    } catch (e) {
+      console.error("[scraper-engine] Failed to update site stats:", e.message);
+    }
 
     // Mark job completed
     await updateJobStatus(client, DATABASE_ID, COLLECTION_JOBS, jobId, "completed", { stats });
@@ -125,11 +153,11 @@ module.exports = async (req, res) => {
       message: `Scrape completed. New: ${stats.new_listings}, Updated: ${stats.updated}, Failed: ${stats.failed}`,
     });
 
-    console.log(`Job ${jobId} completed:`, stats);
+    console.log(`[scraper-engine] Job ${jobId} completed:`, stats);
     return res.json({ success: true, data: { jobId, siteId, stats } });
 
   } catch (error) {
-    console.error(`Job ${jobId} failed:`, error);
+    console.error(`[scraper-engine] Job ${jobId} failed:`, error);
     await updateJobStatus(client, DATABASE_ID, COLLECTION_JOBS, jobId, "failed", {
       error_message: error.message,
     });
