@@ -1,11 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { databases, functions, DATABASE_ID, COLLECTION_SITES, COLLECTION_JOBS, ID, Query, logAppwriteError, client as appwriteClient } from "@/lib/appwrite";
+import { databases, DATABASE_ID, COLLECTION_SITES, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
+import { triggerScraper, checkJobStatus, toScrapingJob, checkScraperHealth } from "@/lib/scraper-server";
 import type { ScrapingJob, JobStatus, PropertySource, ScrapingJobStats, ScrapingJobFilters } from "@/types";
 
-const SCRAPER_ENGINE_ID = "scraper-engine";
-
 // ─────────────────────────────────────────────
-// FETCH ALL JOBS
+// FETCH ALL JOBS (from Appwrite)
 // ─────────────────────────────────────────────
 export function useScrapingJobs() {
   return useQuery({
@@ -13,7 +12,7 @@ export function useScrapingJobs() {
     queryFn: async () => {
       try {
         const response = await databases.listDocuments(DATABASE_ID, COLLECTION_JOBS, [
-          Query.orderDesc("started_at"),
+          Query.orderDesc("$createdAt"),
           Query.limit(50),
         ]);
         return response.documents.map(transformJobDocument) as ScrapingJob[];
@@ -23,12 +22,12 @@ export function useScrapingJobs() {
       }
     },
     staleTime: 10000,
-    refetchInterval: 5000, // Poll more frequently
+    refetchInterval: 5000,
   });
 }
 
 // ─────────────────────────────────────────────
-// FETCH SINGLE JOB
+// FETCH SINGLE JOB (from Appwrite)
 // ─────────────────────────────────────────────
 export function useScrapingJob(id: string) {
   return useQuery({
@@ -48,31 +47,42 @@ export function useScrapingJob(id: string) {
 }
 
 // ─────────────────────────────────────────────
-// CHECK FUNCTION EXECUTION STATUS
+// FETCH JOB STATUS (from Scraper Server)
 // ─────────────────────────────────────────────
-export function useExecutionStatus(executionId: string | null) {
+export function useScraperServerJobStatus(jobId: string | null) {
   return useQuery({
-    queryKey: ["execution-status", executionId],
+    queryKey: ["scraper-server-job", jobId],
     queryFn: async () => {
-      if (!executionId) return null;
-      
+      if (!jobId) return null;
       try {
-        const response = await functions.getExecution(SCRAPER_ENGINE_ID, executionId);
-        console.log("[useExecutionStatus] Execution", executionId, "status:", response.status);
-        return response;
+        const response = await checkJobStatus(jobId);
+        return toScrapingJob(response);
       } catch (error) {
-        console.error("[useExecutionStatus] Failed to get execution:", error);
+        console.error("[useScraperServerJobStatus] Failed to get job status from scraper server:", error);
         return null;
       }
     },
-    enabled: !!executionId,
-    refetchInterval: 2000, // Poll every 2 seconds
+    enabled: !!jobId,
+    refetchInterval: 2000,
     retry: false,
   });
 }
 
 // ─────────────────────────────────────────────
-// TRIGGER NEW SCRAPE
+// CHECK SCRAPER SERVER HEALTH
+// ─────────────────────────────────────────────
+export function useScraperServerHealth() {
+  return useQuery({
+    queryKey: ["scraper-server-health"],
+    queryFn: checkScraperHealth,
+    staleTime: 30000,
+    refetchInterval: 60000,
+    retry: 2,
+  });
+}
+
+// ─────────────────────────────────────────────
+// TRIGGER NEW SCRAPE (using Scraper Server)
 // ─────────────────────────────────────────────
 export function useTriggerScrape() {
   const queryClient = useQueryClient();
@@ -82,10 +92,10 @@ export function useTriggerScrape() {
       source: PropertySource;
       trigger: "manual" | "agent";
       filters?: ScrapingJobFilters;
-    }): Promise<{ job: ScrapingJob; executionId: string }> => {
+    }): Promise<{ jobId: string; message: string }> => {
       console.log("[useTriggerScrape] Starting with params:", params);
 
-      // Step 1: Get site document ID
+      // Step 1: Get site document ID from Appwrite
       let siteId: string;
       try {
         const response = await databases.listDocuments(
@@ -105,7 +115,7 @@ export function useTriggerScrape() {
         throw error;
       }
 
-      // Step 2: Create job document
+      // Step 2: Create job document in Appwrite (for frontend tracking)
       const documentData: Record<string, unknown> = {
         site_id: siteId,
         status: "pending",
@@ -118,8 +128,8 @@ export function useTriggerScrape() {
         created_by: params.trigger === "agent" ? "hermes-agent" : "admin@realestate.be",
       };
 
-      console.log("[useTriggerScrape] Creating job document...");
-      let job: ScrapingJob;
+      console.log("[useTriggerScrape] Creating job document in Appwrite...");
+      let jobId: string;
       try {
         const response = await databases.createDocument(
           DATABASE_ID,
@@ -127,31 +137,33 @@ export function useTriggerScrape() {
           ID.unique(),
           documentData
         );
-        job = transformJobDocument(response) as ScrapingJob;
-        console.log("[useTriggerScrape] Job created:", job.$id);
+        jobId = response.$id;
+        console.log("[useTriggerScrape] Job document created:", jobId);
       } catch (error) {
         logAppwriteError("useTriggerScrape - createDocument", error);
         throw error;
       }
 
-      // Step 3: Trigger function ASYNC
-      console.log("[useTriggerScrape] Triggering scraper-engine (async)...");
-      let executionId = "";
+      // Step 3: Call Scraper Server (instead of Appwrite Function)
+      console.log("[useTriggerScrape] Calling scraper server...");
       try {
-        const execution = await functions.createExecution(
-          SCRAPER_ENGINE_ID,
-          JSON.stringify({ source: params.source, siteId, jobId: job.$id }),
-          true // async = true
-        );
-        executionId = execution.$id;
-        console.log("[useTriggerScrape] Execution triggered:", executionId, "status:", execution.status);
+        const result = await triggerScraper({
+          source: params.source,
+          trigger: params.trigger,
+          filters: params.filters,
+        });
+        
+        console.log("[useTriggerScrape] Scraper server response:", result);
+        // Return our job ID for frontend tracking
+        return { jobId, message: result.message };
       } catch (error) {
-        logAppwriteError("useTriggerScrape - createExecution", error);
-        console.error("[useTriggerScrape] Function trigger failed:", error);
-        // Don't throw - job is created, function can be retried
+        console.error("[useTriggerScrape] Scraper server call failed:", error);
+        // Still return the job ID - user can see the error in job status
+        return { 
+          jobId, 
+          message: error instanceof Error ? error.message : "Failed to connect to scraper server" 
+        };
       }
-
-      return { job, executionId };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scraping-jobs"] });
