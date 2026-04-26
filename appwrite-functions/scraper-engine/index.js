@@ -1,6 +1,8 @@
 /**
  * BelRealty - Scraper Engine
- * For Appwrite self-hosted 1.7.4
+ * 
+ * Architecture: Function reads job data from database instead of receiving payload.
+ * This is more reliable and creates a proper audit trail.
  */
 
 const sdk = require("node-appwrite");
@@ -11,10 +13,7 @@ const APPWRITE_API_KEY = process.env.APPWRITE_API_KEY;
 const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
 
 module.exports = async (req) => {
-  console.log("[scraper-engine] Triggered");
-  console.log("[scraper-engine] req keys:", Object.keys(req));
-  console.log("[scraper-engine] req.headers:", req.headers);
-  console.log("[scraper-engine] req.payload:", req.payload);
+  console.log("[scraper-engine] Function triggered");
   
   if (!APPWRITE_API_KEY) {
     console.error("[scraper-engine] Missing API key");
@@ -29,53 +28,55 @@ module.exports = async (req) => {
   const databases = new sdk.Databases(client);
   const Query = sdk.Query;
 
-  // Try to get payload from various sources
-  let payload = null;
-  
-  // 1. Try req.payload (standard Appwrite)
-  if (req.payload) {
-    try {
-      payload = typeof req.payload === 'string' ? JSON.parse(req.payload) : req.payload;
-    } catch {}
-  }
-  
-  // 2. Try req.headers['x-appwrite-data'] (custom header)
-  if (!payload && req.headers) {
-    const headerData = req.headers['x-appwrite-data'];
-    if (headerData) {
-      try {
-        payload = JSON.parse(headerData);
-      } catch {}
+  // FIND PENDING JOB
+  // Find the oldest pending job to process
+  let job = null;
+  try {
+    const jobsResponse = await databases.listDocuments(
+      DATABASE_ID, 
+      "scraping_jobs",
+      [
+        Query.equal("status", "pending"),
+        Query.orderAsc("started_at"),
+        Query.limit(1)
+      ]
+    );
+    
+    if (jobsResponse.documents.length > 0) {
+      job = jobsResponse.documents[0];
     }
+  } catch (e) {
+    console.error("[scraper-engine] Failed to find pending job:", e.message);
+    return { success: false, error: "Failed to find pending job" };
   }
+
+  if (!job) {
+    console.log("[scraper-engine] No pending jobs found");
+    return { success: false, error: "No pending jobs" };
+  }
+
+  const jobId = job.$id;
+  const siteId = job.site_id;
   
-  // 3. Try to parse from body if it's a string
-  if (!payload && req.body) {
-    try {
-      payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    } catch {}
-  }
+  // Parse filters
+  let filters = {};
+  try {
+    filters = job.filters ? JSON.parse(job.filters) : {};
+  } catch {}
 
-  console.log("[scraper-engine] Parsed payload:", payload);
-
-  if (!payload) {
-    return { success: false, error: "No payload received" };
-  }
-
-  const { jobId, siteId, filters = {} } = payload;
-
-  if (!jobId || !siteId) {
-    return { success: false, error: "Missing jobId or siteId" };
-  }
-
-  console.log(`[scraper-engine] Job: ${jobId}, Site: ${siteId}`);
+  console.log("[scraper-engine] Processing job:", jobId, "site:", siteId);
 
   try {
+    // Get site
     const site = await databases.getDocument(DATABASE_ID, "scraping_sites", siteId);
-    console.log("[scraper-engine] Site:", site.name);
+    console.log("[scraper-engine] Site:", site.name, site.base_url);
 
-    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, { status: "running" });
-    
+    // Update job to running
+    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, { 
+      status: "running" 
+    });
+
+    // Get parser based on site slug
     let Parser;
     try {
       Parser = require("./parsers/" + site.slug);
@@ -84,36 +85,55 @@ module.exports = async (req) => {
     }
     const parser = new Parser();
 
+    // Scrape listings
+    console.log("[scraper-engine] Scraping from:", site.base_url);
     const listings = await parser.scrapeListings(site, filters);
-    console.log("[scraper-engine] Listings:", listings.length);
+    console.log("[scraper-engine] Found listings:", listings.length);
 
-    const stats = { total_found: listings.length, new_listings: 0, updated: 0, failed: 0 };
+    const stats = { 
+      total_found: listings.length, 
+      new_listings: 0, 
+      updated: 0, 
+      failed: 0 
+    };
 
-    for (const listing of listings) {
+    // Process each listing
+    for (let i = 0; i < listings.length; i++) {
+      const listing = listings[i];
       try {
         const data = await parser.scrapePropertyDetail(listing.url);
         
+        // Check if property exists
         const existing = await databases.listDocuments(
-          DATABASE_ID, "properties",
-          [Query.equal("source_id", listing.sourceId), Query.limit(1)]
+          DATABASE_ID, 
+          "properties",
+          [
+            Query.equal("source_id", listing.sourceId),
+            Query.equal("site_id", siteId),
+            Query.limit(1)
+          ]
         );
 
         if (existing.documents.length > 0) {
+          // Update existing
           const prop = existing.documents[0];
-          if (prop.price !== data.price) {
+          if (prop.price !== data.price || prop.title !== data.title) {
             await databases.updateDocument(DATABASE_ID, "properties", prop.$id, {
-              price: data.price,
-              title: data.title,
+              price: data.price || prop.price,
+              title: data.title || prop.title,
+              description: data.description || prop.description || "",
+              photos: data.photos ? JSON.stringify(data.photos) : prop.photos,
               last_updated: new Date().toISOString(),
             });
             stats.updated++;
           }
         } else {
+          // Create new
           await databases.createDocument(DATABASE_ID, "properties", "unique()", {
             site_id: siteId,
             source_id: listing.sourceId,
             url: listing.url,
-            title: data.title || "",
+            title: data.title || "Untitled",
             description: data.description || "",
             price: data.price || 0,
             surface_sqm: data.surface_sqm || 0,
@@ -122,7 +142,10 @@ module.exports = async (req) => {
             type: data.type || "apartment",
             city: data.city || "",
             address: data.address || "",
-            photos: JSON.stringify(data.photos || []),
+            photos: data.photos ? JSON.stringify(data.photos) : "[]",
+            agent_name: data.agent_name || "",
+            agent_phone: data.agent_phone || "",
+            agent_agency: data.agent_agency || "",
             is_active: true,
             scraped_at: new Date().toISOString(),
             last_updated: new Date().toISOString(),
@@ -130,38 +153,47 @@ module.exports = async (req) => {
           stats.new_listings++;
         }
 
-        await new Promise(r => setTimeout(r, site.rate_limit_ms || 2000));
+        // Rate limiting
+        if (site.rate_limit_ms) {
+          await new Promise(r => setTimeout(r, site.rate_limit_ms));
+        }
       } catch (err) {
         stats.failed++;
+        console.error("[scraper-engine] Failed listing:", err.message);
       }
     }
 
+    // Update site stats
+    const countResp = await databases.listDocuments(
+      DATABASE_ID, "properties",
+      [Query.equal("site_id", siteId), Query.limit(0)]
+    );
+    
     await databases.updateDocument(DATABASE_ID, "scraping_sites", siteId, {
-      properties_count: stats.total_found,
+      properties_count: countResp.total,
       last_scrape_at: new Date().toISOString(),
       last_scrape_status: "success",
     });
 
+    // Mark job completed
     await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
       status: "completed",
       stats: JSON.stringify(stats),
       completed_at: new Date().toISOString(),
     });
 
-    console.log("[scraper-engine] Completed:", stats);
-    return { success: true, stats };
+    console.log("[scraper-engine] Job completed:", stats);
+    return { success: true, jobId, stats };
 
   } catch (error) {
-    console.error("[scraper-engine] Error:", error.message);
+    console.error("[scraper-engine] Job failed:", error.message);
     
-    try {
-      await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
-        status: "failed",
-        error_message: error.message,
-        completed_at: new Date().toISOString(),
-      });
-    } catch {}
-
-    return { success: false, error: error.message };
+    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
+      status: "failed",
+      error_message: error.message,
+      completed_at: new Date().toISOString(),
+    });
+    
+    return { success: false, jobId, error: error.message };
   }
 };
