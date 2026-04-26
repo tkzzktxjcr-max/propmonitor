@@ -19,21 +19,24 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine AS production
 
-# Install Playwright dependencies for Puppeteer
+# Install Chromium and dependencies for Puppeteer
 RUN apk add --no-cache \
     chromium \
-    chromium-suid \
     nss \
     freetype \
     harfbuzz \
     ca-certificates \
     ttf-freefont \
-    udev
+    udev \
+    fontconfig \
+    libstdc++ \
+    libc6-compat
 
 # Set environment variables for Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-ENV PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage"
+ENV PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu"
+ENV CHROME_PATH=/usr/bin/chromium-browser
 
 WORKDIR /app
 
