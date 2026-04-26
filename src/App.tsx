@@ -10,7 +10,6 @@ import Analytics from "./pages/Analytics";
 import Admin from "./pages/Admin";
 import Login from "./pages/Login";
 import Settings from "./pages/Settings";
-import AlcoholPage from "./pages/Alcohol";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -36,8 +35,7 @@ const App = () => (
           <Route path="/admin" element={<Admin />} />
           <Route path="/login" element={<Login />} />
           <Route path="/settings" element={<Settings />} />
-                    <Route path="/alcohol" element={<AlcoholPage />} />
-                    <Route path="*" element={<NotFound />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
     </TooltipProvider>

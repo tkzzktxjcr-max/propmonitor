@@ -9,7 +9,6 @@ import {
   MapPin,
   ChevronLeft,
   Loader2,
-  Wine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -25,7 +24,6 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Properties", href: "/properties", icon: Building2 },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
-  { name: "Alcohol Tracker", href: "/alcohol", icon: Wine },
 ];
 
 const adminNavigation = [
