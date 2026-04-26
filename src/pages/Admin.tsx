@@ -1,20 +1,31 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { JobList, ScrapeTrigger } from "@/components/admin";
 import { SiteManager } from "@/components/admin/SiteManager";
 import { ScrapingLogs } from "@/components/admin/ScrapingLogs";
-import { useScrapingJobs, useTriggerScrape, useCancelJob } from "@/hooks/useScrapingJobs";
+import { useScrapingJobs, useTriggerScrape, useCancelJob, useExecutionStatus } from "@/hooks/useScrapingJobs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Database, Shield, Activity, Settings, Globe, FileText } from "lucide-react";
+import { Database, Shield, Activity, Settings, Globe, FileText, Loader2 } from "lucide-react";
 
 export default function Admin() {
   const { data: jobs, isLoading } = useScrapingJobs();
   const triggerScrape = useTriggerScrape();
   const cancelJob = useCancelJob();
   const [activeTab, setActiveTab] = useState("jobs");
+  const [lastExecutionId, setLastExecutionId] = useState<string | null>(null);
+
+  // Track execution status
+  const { data: executionStatus } = useExecutionStatus(lastExecutionId);
+
+  // Update lastExecutionId when a new job is triggered
+  useEffect(() => {
+    if (triggerScrape.data?.executionId) {
+      setLastExecutionId(triggerScrape.data.executionId);
+    }
+  }, [triggerScrape.data]);
 
   const runningJobs = jobs?.filter((j) => j.status === "running") || [];
   const pendingJobs = jobs?.filter((j) => j.status === "pending") || [];
@@ -28,6 +39,12 @@ export default function Admin() {
   const handleCancelJob = (jobId: string) => {
     cancelJob.mutate(jobId);
   };
+
+  // Determine status display
+  const execStatus = executionStatus?.status;
+  const isSuccess = execStatus === "completed";
+  const isFailed = execStatus === "failed";
+  const isProcessing = execStatus === "waiting" || execStatus === "processing" || execStatus === "scheduled";
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -52,6 +69,54 @@ export default function Admin() {
                 Manage scrapers, sites, monitor jobs, and configure the platform
               </p>
             </div>
+
+            {/* Execution Status Banner */}
+            {executionStatus && (
+              <Card className={`mb-6 ${isFailed ? 'border-red-300 bg-red-50' : isSuccess ? 'border-green-300 bg-green-50' : 'border-blue-300 bg-blue-50'}`}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    {isProcessing ? (
+                      <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+                    ) : isSuccess ? (
+                      <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                        <span className="text-white text-xs">✓</span>
+                      </div>
+                    ) : isFailed ? (
+                      <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center">
+                        <span className="text-white text-xs">✗</span>
+                      </div>
+                    ) : null}
+                    <div>
+                      <p className="font-medium">
+                        Function Execution: {execStatus}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        {execStatus === 'waiting' && 'Function is queued and will start soon...'}
+                        {execStatus === 'processing' && 'Function is running...'}
+                        {execStatus === 'completed' && 'Function completed successfully'}
+                        {execStatus === 'failed' && 'Function failed - check logs for details'}
+                      </p>
+                      {(executionStatus as Record<string, unknown>).response && (
+                        <details className="mt-2">
+                          <summary className="text-sm text-blue-600 cursor-pointer">View Response</summary>
+                          <pre className="mt-1 p-2 bg-white rounded text-xs overflow-auto max-h-32">
+                            {String((executionStatus as Record<string, unknown>).response)}
+                          </pre>
+                        </details>
+                      )}
+                      {(executionStatus as Record<string, unknown>).stderr && (
+                        <details className="mt-2">
+                          <summary className="text-sm text-red-600 cursor-pointer">View Errors</summary>
+                          <pre className="mt-1 p-2 bg-white rounded text-xs overflow-auto max-h-32">
+                            {String((executionStatus as Record<string, unknown>).stderr)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Quick Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
@@ -134,9 +199,7 @@ export default function Admin() {
                 </TabsTrigger>
               </TabsList>
 
-              {/* ───────────────────────────────────────────── */}
               {/* TAB: SCRAPING JOBS */}
-              {/* ───────────────────────────────────────────── */}
               <TabsContent value="jobs">
                 <Card>
                   <CardHeader>
@@ -152,23 +215,17 @@ export default function Admin() {
                 </Card>
               </TabsContent>
 
-              {/* ───────────────────────────────────────────── */}
               {/* TAB: SITES */}
-              {/* ───────────────────────────────────────────── */}
               <TabsContent value="sites">
                 <SiteManager />
               </TabsContent>
 
-              {/* ───────────────────────────────────────────── */}
               {/* TAB: LOGS */}
-              {/* ───────────────────────────────────────────── */}
               <TabsContent value="logs">
                 <ScrapingLogs />
               </TabsContent>
 
-              {/* ───────────────────────────────────────────── */}
               {/* TAB: TRIGGER SCRAPE */}
-              {/* ───────────────────────────────────────────── */}
               <TabsContent value="trigger">
                 <div className="grid md:grid-cols-2 gap-6">
                   <ScrapeTrigger
@@ -216,9 +273,7 @@ export default function Admin() {
                 </div>
               </TabsContent>
 
-              {/* ───────────────────────────────────────────── */}
               {/* TAB: SETTINGS */}
-              {/* ───────────────────────────────────────────── */}
               <TabsContent value="settings">
                 <Card>
                   <CardHeader>

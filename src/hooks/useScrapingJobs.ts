@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { databases, functions, DATABASE_ID, COLLECTION_SITES, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
+import { databases, functions, DATABASE_ID, COLLECTION_SITES, COLLECTION_JOBS, ID, Query, logAppwriteError, client as appwriteClient } from "@/lib/appwrite";
 import type { ScrapingJob, JobStatus, PropertySource, ScrapingJobStats, ScrapingJobFilters } from "@/types";
 
 const SCRAPER_ENGINE_ID = "scraper-engine";
@@ -23,7 +23,7 @@ export function useScrapingJobs() {
       }
     },
     staleTime: 10000,
-    refetchInterval: 30000,
+    refetchInterval: 5000, // Poll more frequently
   });
 }
 
@@ -43,7 +43,31 @@ export function useScrapingJob(id: string) {
       }
     },
     enabled: !!id,
-    refetchInterval: 5000,
+    refetchInterval: 3000,
+  });
+}
+
+// ─────────────────────────────────────────────
+// CHECK FUNCTION EXECUTION STATUS
+// ─────────────────────────────────────────────
+export function useExecutionStatus(executionId: string | null) {
+  return useQuery({
+    queryKey: ["execution-status", executionId],
+    queryFn: async () => {
+      if (!executionId) return null;
+      
+      try {
+        const response = await functions.getExecution(SCRAPER_ENGINE_ID, executionId);
+        console.log("[useExecutionStatus] Execution", executionId, "status:", response.status);
+        return response;
+      } catch (error) {
+        console.error("[useExecutionStatus] Failed to get execution:", error);
+        return null;
+      }
+    },
+    enabled: !!executionId,
+    refetchInterval: 2000, // Poll every 2 seconds
+    retry: false,
   });
 }
 
@@ -58,12 +82,11 @@ export function useTriggerScrape() {
       source: PropertySource;
       trigger: "manual" | "agent";
       filters?: ScrapingJobFilters;
-    }) => {
+    }): Promise<{ job: ScrapingJob; executionId: string }> => {
       console.log("[useTriggerScrape] Starting with params:", params);
 
       // Step 1: Get site document ID
       let siteId: string;
-      let siteSlug: string;
       try {
         const response = await databases.listDocuments(
           DATABASE_ID,
@@ -72,18 +95,17 @@ export function useTriggerScrape() {
         );
         
         if (response.documents.length === 0) {
-          throw new Error(`Site not found: ${params.source}`);
+          throw new Error(`Site not found: ${params.source}. Make sure the site slug matches exactly.`);
         }
         
         siteId = response.documents[0].$id;
-        siteSlug = response.documents[0].slug;
-        console.log("[useTriggerScrape] Site found:", siteSlug, "ID:", siteId);
+        console.log("[useTriggerScrape] Site found, ID:", siteId);
       } catch (error) {
         logAppwriteError("useTriggerScrape - getSite", error);
         throw error;
       }
 
-      // Step 2: Create job document with ALL data needed for scraping
+      // Step 2: Create job document
       const documentData: Record<string, unknown> = {
         site_id: siteId,
         status: "pending",
@@ -112,22 +134,24 @@ export function useTriggerScrape() {
         throw error;
       }
 
-      // Step 3: Trigger function ASYNC - it will read from database
+      // Step 3: Trigger function ASYNC
       console.log("[useTriggerScrape] Triggering scraper-engine (async)...");
+      let executionId = "";
       try {
         const execution = await functions.createExecution(
           SCRAPER_ENGINE_ID,
-          JSON.stringify({ source: params.source, siteId }), // Pass for debugging
+          JSON.stringify({ source: params.source, siteId, jobId: job.$id }),
           true // async = true
         );
-        console.log("[useTriggerScrape] Execution triggered:", execution.$id, "status:", execution.status);
+        executionId = execution.$id;
+        console.log("[useTriggerScrape] Execution triggered:", executionId, "status:", execution.status);
       } catch (error) {
         logAppwriteError("useTriggerScrape - createExecution", error);
-        console.error("[useTriggerScrape] Function trigger failed (job still created):", error);
-        // Don't throw - job is created, function can be retried manually
+        console.error("[useTriggerScrape] Function trigger failed:", error);
+        // Don't throw - job is created, function can be retried
       }
 
-      return job;
+      return { job, executionId };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scraping-jobs"] });
