@@ -1,67 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { databases, DATABASE_ID, COLLECTION_PROPERTIES, Query, isDemoMode } from "@/lib/appwrite";
+import { useQuery } from "@tanstack/react-query";
+import { databases, DATABASE_ID, COLLECTION_PROPERTIES, Query, logAppwriteError } from "@/lib/appwrite";
 import { postalCodeToProvince, extractPostalCode } from "@/lib/utils";
-import type { Property, PropertyFilters, PropertySource, PropertyType, EnergyRating } from "@/types";
-
-// ─────────────────────────────────────────────
-// MOCK DATA (Demo Mode)
-// ─────────────────────────────────────────────
-const mockProperties: Property[] = [
-  {
-    $id: "prop-1",
-    site_id: "site-immoweb",
-    source_id: "iw-12345",
-    url: "https://www.immoweb.be/en/property/12345",
-    title: "Modern Apartment with Brussels View",
-    description: "Stunning modern apartment in Brussels.",
-    price: 485000,
-    surface_sqm: 95,
-    bedrooms: 2,
-    bathrooms: 1,
-    type: "apartment",
-    city: "Brussels",
-    postal_code: "1050",
-    province: "Brussels-Capital",
-    latitude: 50.8503,
-    longitude: 4.3517,
-    address: "Avenue Louise 234, 1050 Brussels",
-    photos: ["https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800"],
-    agent_name: "Jean-Pierre Declercq",
-    agent_phone: "+32 2 123 45 67",
-    agent_agency: "Brussels Real Estate",
-    amenities: ["Parking", "Elevator"],
-    energy_rating: "A",
-    year_built: 2018,
-    is_active: true,
-    scraped_at: "2024-03-20T10:30:00Z",
-    last_updated: "2024-03-20T10:30:00Z",
-    source: "immoweb",
-    location: {
-      address: "Avenue Louise 234, 1050 Brussels",
-      city: "Brussels",
-      province: "Brussels-Capital",
-      postal_code: "1050",
-      latitude: 50.8503,
-      longitude: 4.3517,
-      neighborhood: "Ixelles",
-    },
-    specs: {
-      type: "apartment",
-      bedrooms: 2,
-      bathrooms: 1,
-      surface_sqm: 95,
-      land_sqm: 0,
-      year_built: 2018,
-      energy_rating: "A",
-    },
-    agent: {
-      name: "Jean-Pierre Declercq",
-      phone: "+32 2 123 45 67",
-      agency: "Brussels Real Estate",
-    },
-    price_history: [{ date: "2024-01-15", price: 495000 }, { date: "2024-03-20", price: 485000 }],
-  },
-];
+import type { Property, PropertyFilters, PropertySource } from "@/types";
 
 // ─────────────────────────────────────────────
 // FETCH PROPERTIES WITH FILTERS
@@ -70,10 +10,6 @@ export function useProperties(filters?: PropertyFilters) {
   return useQuery({
     queryKey: ["properties", filters],
     queryFn: async () => {
-      if (isDemoMode()) {
-        return filterMockProperties(mockProperties, filters);
-      }
-
       const queries: string[] = [
         Query.orderDesc("$createdAt"),
       ];
@@ -109,13 +45,18 @@ export function useProperties(filters?: PropertyFilters) {
         ]));
       }
 
-      const response = await databases.listDocuments(
-        DATABASE_ID,
-        COLLECTION_PROPERTIES,
-        queries
-      );
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTION_PROPERTIES,
+          queries
+        );
 
-      return response.documents.map((doc: any) => transformDocument(doc)) as Property[];
+        return response.documents.map((doc: unknown) => transformDocument(doc)) as Property[];
+      } catch (error) {
+        logAppwriteError("useProperties - listDocuments", error);
+        throw error;
+      }
     },
     staleTime: 30000,
   });
@@ -128,156 +69,101 @@ export function useProperty(id: string) {
   return useQuery({
     queryKey: ["property", id],
     queryFn: async () => {
-      if (isDemoMode()) {
-        return mockProperties.find((p) => p.$id === id) || null;
+      try {
+        const response = await databases.getDocument(
+          DATABASE_ID,
+          COLLECTION_PROPERTIES,
+          id
+        );
+
+        return transformDocument(response) as Property;
+      } catch (error) {
+        logAppwriteError(`useProperty - getDocument(${id})`, error);
+        throw error;
       }
-
-      const response = await databases.getDocument(
-        DATABASE_ID,
-        COLLECTION_PROPERTIES,
-        id
-      );
-
-      return transformDocument(response) as Property;
     },
     enabled: !!id,
   });
 }
 
 // ─────────────────────────────────────────────
-// CREATE PROPERTY
+// HELPER: Parse JSON string or array
 // ─────────────────────────────────────────────
-export function useCreateProperty() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (property: Omit<Property, "$id" | "scraped_at" | "last_updated">) => {
-      if (isDemoMode()) {
-        const newProp: Property = {
-          ...property,
-          $id: `prop-${Date.now()}`,
-          scraped_at: new Date().toISOString(),
-          last_updated: new Date().toISOString(),
-        };
-        mockProperties.push(newProp);
-        return newProp;
-      }
-
-      const response = await databases.createDocument(
-        DATABASE_ID,
-        COLLECTION_PROPERTIES,
-        "unique()",
-        {
-          ...property,
-          scraped_at: new Date().toISOString(),
-          last_updated: new Date().toISOString(),
-        }
-      );
-
-      return transformDocument(response) as Property;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["properties"] });
-    },
-  });
-}
-
-// ─────────────────────────────────────────────
-// HELPER: Filter mock properties
-// ─────────────────────────────────────────────
-function filterMockProperties(properties: Property[], filters?: PropertyFilters): Property[] {
-  if (!filters) return properties;
-
-  let filtered = [...properties];
-
-  if (filters.price_min) filtered = filtered.filter((p) => p.price >= filters.price_min!);
-  if (filters.price_max) filtered = filtered.filter((p) => p.price <= filters.price_max!);
-  if (filters.city) filtered = filtered.filter((p) => p.city.toLowerCase().includes(filters.city!.toLowerCase()));
-  if (filters.province) filtered = filtered.filter((p) => p.province === filters.province);
-  if (filters.type) filtered = filtered.filter((p) => p.type === filters.type);
-  if (filters.bedrooms_min !== undefined) filtered = filtered.filter((p) => p.bedrooms >= filters.bedrooms_min!);
-  if (filters.bedrooms_max !== undefined) filtered = filtered.filter((p) => p.bedrooms <= filters.bedrooms_max!);
-  if (filters.site_id) filtered = filtered.filter((p) => p.site_id === filters.site_id);
-  if (filters.search) {
-    const search = filters.search.toLowerCase();
-    filtered = filtered.filter(
-      (p) => p.title.toLowerCase().includes(search) || p.city.toLowerCase().includes(search)
-    );
+function parsePhotos(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value as string[];
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   }
-
-  return filtered;
+  return [];
 }
 
 // ─────────────────────────────────────────────
 // HELPER: Transform Appwrite document to Property
 // ─────────────────────────────────────────────
-function transformDocument(doc: any): Property {
-  const postalCode = extractPostalCode(doc.address || doc.city || "");
+function transformDocument(doc: unknown): Property {
+  const d = doc as Record<string, unknown>;
+  const postalCode = extractPostalCode((d.address as string) || (d.city as string) || "");
 
   return {
-    $id: doc.$id,
-    site_id: doc.site_id,
-    source_id: doc.source_id,
-    url: doc.url,
-    title: doc.title,
-    description: doc.description || "",
-    price: doc.price,
-    surface_sqm: doc.surface_sqm || 0,
-    bedrooms: doc.bedrooms || 0,
-    bathrooms: doc.bathrooms || 0,
-    type: doc.type,
-    city: doc.city,
+    $id: d.$id as string,
+    site_id: (d.site_id as string) || "",
+    source_id: (d.source_id as string) || "",
+    url: (d.url as string) || "",
+    title: (d.title as string) || "",
+    description: (d.description as string) || "",
+    price: (d.price as number) || 0,
+    surface_sqm: (d.surface_sqm as number) || 0,
+    bedrooms: (d.bedrooms as number) || 0,
+    bathrooms: (d.bathrooms as number) || 0,
+    type: (d.type as Property["type"]) || "apartment",
+    city: (d.city as string) || "",
     postal_code: postalCode,
-    province: doc.province || postalCodeToProvince(postalCode),
-    latitude: doc.latitude || 0,
-    longitude: doc.longitude || 0,
-    address: doc.address || "",
-    photos: parseJSON(doc.photos, []),
-    agent_name: doc.agent_name || "",
-    agent_phone: doc.agent_phone || "",
-    agent_agency: doc.agent_agency || "",
+    province: (d.province as string) || postalCodeToProvince(postalCode),
+    latitude: (d.latitude as number) || 0,
+    longitude: (d.longitude as number) || 0,
+    address: (d.address as string) || "",
+    photos: parsePhotos(d.photos),
+    agent_name: (d.agent_name as string) || "",
+    agent_phone: (d.agent_phone as string) || "",
+    agent_agency: (d.agent_agency as string) || "",
     amenities: [],
     energy_rating: "F",
     year_built: null,
-    is_active: doc.is_active !== undefined ? doc.is_active : true,
-    scraped_at: doc.scraped_at,
-    last_updated: doc.last_updated,
-    source: doc.source || getSourceFromSlug(doc.site_id),
+    is_active: d.is_active !== undefined ? (d.is_active as boolean) : true,
+    scraped_at: (d.scraped_at as string) || "",
+    last_updated: (d.last_updated as string) || "",
+    source: (d.source as PropertySource) || getSourceFromSlug(d.site_id as string),
     location: {
-      address: doc.address || "",
-      city: doc.city,
-      province: doc.province || postalCodeToProvince(postalCode),
+      address: (d.address as string) || "",
+      city: (d.city as string) || "",
+      province: (d.province as string) || postalCodeToProvince(postalCode),
       postal_code: postalCode,
-      latitude: doc.latitude || 0,
-      longitude: doc.longitude || 0,
-      neighborhood: doc.city,
+      latitude: (d.latitude as number) || 0,
+      longitude: (d.longitude as number) || 0,
+      neighborhood: (d.city as string) || "",
     },
     specs: {
-      type: doc.type,
-      bedrooms: doc.bedrooms || 0,
-      bathrooms: doc.bathrooms || 0,
-      surface_sqm: doc.surface_sqm || 0,
+      type: (d.type as Property["type"]) || "apartment",
+      bedrooms: (d.bedrooms as number) || 0,
+      bathrooms: (d.bathrooms as number) || 0,
+      surface_sqm: (d.surface_sqm as number) || 0,
       land_sqm: 0,
       year_built: null,
       energy_rating: "F",
     },
     agent: {
-      name: doc.agent_name || "",
-      phone: doc.agent_phone || "",
-      agency: doc.agent_agency || "",
+      name: (d.agent_name as string) || "",
+      phone: (d.agent_phone as string) || "",
+      agency: (d.agent_agency as string) || "",
     },
-    price_history: [{ date: doc.last_updated, price: doc.price }],
+    price_history: [{ date: (d.last_updated as string) || "", price: (d.price as number) || 0 }],
   };
-}
-
-function parseJSON(str: string | string[] | undefined, fallback: any): any {
-  if (!str) return fallback;
-  if (Array.isArray(str)) return str;
-  try {
-    return JSON.parse(str);
-  } catch {
-    return fallback;
-  }
 }
 
 function getSourceFromSlug(siteId?: string): PropertySource {

@@ -48,7 +48,6 @@ export function parseAppwriteError(error: unknown): { message: string; code?: nu
   if (error && typeof error === 'object') {
     const err = error as Record<string, unknown>;
     
-    // Appwrite SDK errors have this structure
     if (err.response) {
       const response = err.response as Record<string, unknown>;
       return {
@@ -59,7 +58,6 @@ export function parseAppwriteError(error: unknown): { message: string; code?: nu
       };
     }
     
-    // Direct message
     if (err.message) {
       return {
         message: err.message as string,
@@ -90,24 +88,6 @@ export function logAppwriteError(context: string, error: unknown, data?: unknown
     console.error(`  Details:`, parsed.details);
   }
 }
-
-// ─────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────
-
-/**
- * Check if we're using demo mode (mock data)
- */
-export const isDemoMode = (): boolean => {
-  return import.meta.env.VITE_DEMO_MODE === "true";
-};
-
-/**
- * Check if Appwrite is properly configured
- */
-export const isAppwriteConfigured = (): boolean => {
-  return !!APPWRITE_PROJECT_ID && !!APPWRITE_ENDPOINT;
-};
 
 // ─────────────────────────────────────────────
 // RE-EXPORTS
