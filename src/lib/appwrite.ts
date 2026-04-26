@@ -24,6 +24,15 @@ export const client = new Client()
   .setProject(APPWRITE_PROJECT_ID);
 
 // ─────────────────────────────────────────────
+// SET API KEY FOR SERVER OPERATIONS
+// ─────────────────────────────────────────────
+const API_KEY = import.meta.env.VITE_APPWRITE_API_KEY;
+if (API_KEY) {
+  // Cast to any to bypass TypeScript strict typing for this SDK method
+  (client as unknown as { setKey: (key: string) => void }).setKey(API_KEY);
+}
+
+// ─────────────────────────────────────────────
 // SERVICES
 // ─────────────────────────────────────────────
 export const account = new Account(client);
@@ -45,7 +54,6 @@ export const DATABASE_ID = APPWRITE_DATABASE_ID;
  * Check if we're using demo mode (mock data)
  */
 export const isDemoMode = (): boolean => {
-  // Demo mode uniquement si VITE_DEMO_MODE=true
   return import.meta.env.VITE_DEMO_MODE === "true";
 };
 
@@ -53,7 +61,7 @@ export const isDemoMode = (): boolean => {
  * Check if Appwrite is properly configured
  */
 export const isAppwriteConfigured = (): boolean => {
-  return !!APPWRITE_ENDPOINT;
+  return !!API_KEY;
 };
 
 // ─────────────────────────────────────────────
