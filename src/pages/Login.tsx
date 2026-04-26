@@ -4,14 +4,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { useLogin } from "@/hooks/useAuth";
+import { useLogin, useRegister } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
 export default function Login() {
   const navigate = useNavigate();
   const login = useLogin();
+  const register = useRegister();
+  const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [error, setError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -19,10 +22,15 @@ export default function Login() {
     setError("");
 
     try {
-      await login.mutateAsync({ email, password });
+      if (isRegister) {
+        await register.mutateAsync({ email, password, name });
+      } else {
+        await login.mutateAsync({ email, password });
+      }
       navigate("/");
-    } catch (err) {
-      setError("Invalid credentials. Please try again.");
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Une erreur est survenue";
+      setError(errorMessage);
     }
   };
 
@@ -54,9 +62,9 @@ export default function Login() {
 
         <Card className="shadow-xl border-0">
           <CardHeader className="text-center pb-2">
-            <CardTitle className="text-2xl">Welcome back</CardTitle>
+            <CardTitle className="text-2xl">{isRegister ? "Create Account" : "Welcome back"}</CardTitle>
             <CardDescription>
-              Sign in to access your dashboard
+              {isRegister ? "Sign up to access your dashboard" : "Sign in to access your dashboard"}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -67,12 +75,26 @@ export default function Login() {
                 </div>
               )}
 
+              {isRegister && (
+                <div className="space-y-2">
+                  <Label htmlFor="name">Name</Label>
+                  <Input
+                    id="name"
+                    type="text"
+                    placeholder="Your name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="admin@realestate.be"
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -88,28 +110,37 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  minLength={8}
                 />
               </div>
 
               <Button
                 type="submit"
                 className="w-full"
-                disabled={login.isPending}
+                disabled={login.isPending || register.isPending}
               >
-                {login.isPending ? (
+                {login.isPending || register.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Signing in...
+                    {isRegister ? "Creating account..." : "Signing in..."}
                   </>
                 ) : (
-                  "Sign In"
+                  isRegister ? "Create Account" : "Sign In"
                 )}
               </Button>
             </form>
 
-            <div className="mt-6 text-center text-sm text-slate-500">
-              <p>Demo credentials:</p>
-              <p className="font-mono text-xs mt-1">admin@realestate.be / any password</p>
+            <div className="mt-6 text-center">
+              <Button
+                variant="link"
+                className="text-sm text-blue-600"
+                onClick={() => {
+                  setIsRegister(!isRegister);
+                  setError("");
+                }}
+              >
+                {isRegister ? "Already have an account? Sign in" : "Don't have an account? Register"}
+              </Button>
             </div>
           </CardContent>
         </Card>

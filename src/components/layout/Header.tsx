@@ -4,10 +4,10 @@ import {
   Search,
   Bell,
   Menu,
-  User,
   LogOut,
   Settings,
   ChevronDown,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,19 +20,30 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, useLogout } from "@/hooks/useAuth";
 import { Sidebar } from "./Sidebar";
+import { useNavigate } from "react-router-dom";
 
 export function Header() {
   const location = useLocation();
-  const { user, isAdmin, logout } = useAuth();
+  const navigate = useNavigate();
+  const { user, isAdmin } = useAuth();
+  const logout = useLogout();
   const [searchQuery, setSearchQuery] = useState("");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     console.log("Searching for:", searchQuery);
-    // In production, this would navigate with search params
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout.mutateAsync();
+      navigate("/login");
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
   };
 
   return (
@@ -140,7 +151,7 @@ export function Header() {
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={logout}
+                onClick={handleLogout}
                 className="text-red-600 cursor-pointer"
               >
                 <LogOut className="mr-2 h-4 w-4" />

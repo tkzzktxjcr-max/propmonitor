@@ -1,68 +1,112 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { account } from "@/lib/appwrite";
+import { account, ID } from "@/lib/appwrite";
 import type { User, UserRole } from "@/types";
 
-// Mock user for demo
-const mockUser: User = {
-  $id: "user-1",
+// Default user for demo/fallback
+const defaultUser: User = {
+  $id: "default",
   name: "Admin User",
-  email: "admin@realestate.be",
+  email: "admin@belrealty.be",
   role: "admin",
   preferences: {
     default_map_view: false,
     favorite_sources: ["immoweb", "immovlan", "zimmo"]
   },
-  created_at: "2024-01-01T00:00:00Z"
+  created_at: new Date().toISOString()
 };
 
 export function useAuth() {
-  const [isAuthenticated, setIsAuthenticated] = useState(true); // Demo: start authenticated
-  const [user, setUser] = useState<User | null>(mockUser);
-  
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Check if user is logged in on mount
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  const checkAuth = async () => {
+    try {
+      const appwriteUser = await account.get();
+      setUser({
+        $id: appwriteUser.$id,
+        name: appwriteUser.name,
+        email: appwriteUser.email,
+        role: "admin", // Default role, could be fetched from user attributes
+        preferences: {
+          default_map_view: false,
+          favorite_sources: ["immoweb", "immovlan", "zimmo"]
+        },
+        created_at: appwriteUser.$createdAt
+      });
+      setIsAuthenticated(true);
+    } catch (error) {
+      // Not logged in
+      setUser(null);
+      setIsAuthenticated(false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const login = useCallback(async (email: string, password: string) => {
-    // In production, this would use Appwrite Auth
-    // await account.createEmailPasswordSession(email, password);
-    console.log("Logging in:", email);
-    
-    // Demo: accept any credentials
-    setUser(mockUser);
-    setIsAuthenticated(true);
-    return mockUser;
+    try {
+      await account.createEmailPasswordSession(email, password);
+      await checkAuth();
+      return user;
+    } catch (error) {
+      console.error("Login failed:", error);
+      throw error;
+    }
   }, []);
-  
+
+  const register = useCallback(async (email: string, password: string, name: string) => {
+    try {
+      await account.create(ID.unique(), email, password, name);
+      await account.createEmailPasswordSession(email, password);
+      await checkAuth();
+      return user;
+    } catch (error) {
+      console.error("Registration failed:", error);
+      throw error;
+    }
+  }, []);
+
   const logout = useCallback(async () => {
-    // In production, this would use Appwrite Auth
-    // await account.deleteSession("current");
-    console.log("Logging out");
-    
-    setUser(null);
-    setIsAuthenticated(false);
+    try {
+      await account.deleteSession("current");
+      setUser(null);
+      setIsAuthenticated(false);
+    } catch (error) {
+      console.error("Logout failed:", error);
+      throw error;
+    }
   }, []);
-  
+
   const isAdmin = user?.role === "admin";
-  
+
   return {
     user,
     isAuthenticated,
     isAdmin,
+    isLoading,
     login,
+    register,
     logout,
+    checkAuth
   };
 }
 
 export function useLogin() {
   const queryClient = useQueryClient();
-  
+  const { checkAuth } = useAuth();
+
   return useMutation({
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
-      // In production, this would call Appwrite Auth
-      console.log("Login attempt:", email);
-      
-      // Demo: accept any credentials
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      return mockUser;
+      await account.createEmailPasswordSession(email, password);
+      await checkAuth();
+      return true;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["user"] });
@@ -70,25 +114,47 @@ export function useLogin() {
   });
 }
 
+export function useRegister() {
+  const queryClient = useQueryClient();
+  const { checkAuth } = useAuth();
+
+  return useMutation({
+    mutationFn: async ({ email, password, name }: { email: string; password: string; name: string }) => {
+      await account.create(ID.unique(), email, password, name);
+      await account.createEmailPasswordSession(email, password);
+      await checkAuth();
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user"] });
+    },
+  });
+}
+
+export function useLogout() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      await account.deleteSession("current");
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.clear();
+    },
+  });
+}
+
 export function useRequireAuth() {
-  const { isAuthenticated, user } = useAuth();
-  
-  // In a real app, this would redirect to login
-  if (!isAuthenticated) {
-    console.warn("User not authenticated");
-  }
-  
-  return { isAuthenticated, user };
+  const { isAuthenticated, user, isLoading } = useAuth();
+
+  return { isAuthenticated, user, isLoading };
 }
 
 export function useRequireRole(requiredRole: UserRole) {
   const { user, isAdmin } = useAuth();
-  
+
   const hasRole = requiredRole === "admin" ? isAdmin : !!user;
-  
-  if (!hasRole) {
-    console.warn(`User does not have required role: ${requiredRole}`);
-  }
-  
+
   return { hasRole, user };
 }
