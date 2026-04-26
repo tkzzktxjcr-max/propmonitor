@@ -1,0 +1,13 @@
+{
+  "name": "scraper-scheduler",
+  "version": "1.0.0",
+  "description": "BelRealty - Cron scheduler to trigger automatic scrapes",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "appwrite deploy function --functionId=scraper-scheduler"
+  },
+  "dependencies": {
+    "node-appwrite": "^11.0.0"
+  }
+}

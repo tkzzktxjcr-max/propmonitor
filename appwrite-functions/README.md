@@ -1,55 +1,18 @@
 # BelRealty - Appwrite Functions
 
-Ce dossier contient les fonctions serverless pour le scraping de propriétés immobilières.
+## Deployment
 
-## Structure
-
+### Variables d'environnement
+Créer `.env` avec :
 ```
-appwrite-functions/
-├── scraper-trigger/     # Fonction HTTP pour déclencher un scrape
-├── scraper-engine/      # Moteur de scraping (parsers + services)
-└── scraper-scheduler/   # Cron job pour scraping automatique
-```
-
-## Installation
-
-```bash
-cd appwrite-functions/scraper-trigger
-npm install
-
-cd ../scraper-engine
-npm install
-
-cd ../scraper-scheduler
-npm install
+APPWRITE_ENDPOINT=https://backend.071098v2.duckdns.org/v1
+APPWRITE_PROJECT_ID=propertymonitor
+APPWRITE_DATABASE_ID=belrealty-db
+APPWRITE_API_KEY=ta_cle_api
 ```
 
-## Déploiement
+### Functions
 
-```bash
-# scraper-trigger
-appwrite deploy function --functionId=scraper-trigger
-
-# scraper-engine
-appwrite deploy function --functionId=scraper-engine
-
-# scraper-scheduler
-appwrite deploy function --functionId=scraper-scheduler
-```
-
-## Configuration
-
-Définir ces variables dans Appwrite Console > Functions > Settings > Variables :
-
-| Variable | Description |
-|----------|-------------|
-| `APPWRITE_ENDPOINT` | Endpoint Appwrite |
-| `APPWRITE_PROJECT_ID` | ID du projet |
-| `APPWRITE_DATABASE_ID` | ID de la database |
-| `APPWRITE_API_KEY` | Clé API avec permissions |
-
-## Ordre d'exécution
-
-1. `scraper-scheduler` (cron hourly) → appelle `scraper-trigger`
-2. `scraper-trigger` (HTTP POST) → crée un job → appelle `scraper-engine`
-3. `scraper-engine` (async) → scrape les sites → stocke les données
+1. **scraper-scheduler** - Cron hourly
+2. **scraper-trigger** - HTTP POST endpoint
+3. **scraper-engine** - Async scraping engine
