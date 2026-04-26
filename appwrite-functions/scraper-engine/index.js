@@ -14,8 +14,7 @@ const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
 
 module.exports = async (req, res) => {
   console.log("[scraper-engine] Request received");
-  console.log("[scraper-engine] req.body:", req.body);
-  console.log("[scraper-engine] req.payload:", req.payload);
+  console.log("[scraper-engine] req:", JSON.stringify(req, null, 2));
   
   if (!APPWRITE_API_KEY) {
     return res.json({ success: false, error: "APPWRITE_API_KEY not configured" });
@@ -33,15 +32,26 @@ module.exports = async (req, res) => {
   const COLLECTION_PROPERTIES = "properties";
   const COLLECTION_LOGS = "scraping_logs";
 
-  // Parse payload - try multiple sources
+  // Parse payload from Appwrite function execution
+  // In Appwrite SDK v11+, req.payload is already parsed
   let payload;
   try {
-    const rawPayload = req.payload || req.body || req.rawBody || {};
+    // Try to get payload from various sources
+    const rawPayload = req.payload || req.body || req.rawBody || null;
+    console.log("[scraper-engine] Raw payload type:", typeof rawPayload);
     console.log("[scraper-engine] Raw payload:", rawPayload);
     
-    if (typeof rawPayload === "string") {
-      payload = JSON.parse(rawPayload);
-    } else if (typeof rawPayload === "object" && rawPayload !== null) {
+    if (rawPayload === null || rawPayload === undefined) {
+      payload = {};
+    } else if (typeof rawPayload === "string") {
+      // Try to parse if it's a JSON string
+      try {
+        payload = JSON.parse(rawPayload);
+      } catch {
+        payload = {};
+      }
+    } else if (typeof rawPayload === "object") {
+      // Already an object (Appwrite SDK v11+ parses it automatically)
       payload = rawPayload;
     } else {
       payload = {};
@@ -131,13 +141,8 @@ module.exports = async (req, res) => {
 
     // Update site stats
     try {
-      const propertiesCount = await databases.listDocuments(
-        DATABASE_ID, COLLECTION_PROPERTIES,
-        [new sdk.Query().equal("site_id", siteId).limit(0)]
-      );
-
       await databases.updateDocument(DATABASE_ID, COLLECTION_SITES, siteId, {
-        properties_count: propertiesCount.total,
+        properties_count: stats.total_found,
         last_scrape_at: new Date().toISOString(),
         last_scrape_status: "success",
       });
