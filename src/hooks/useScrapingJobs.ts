@@ -82,7 +82,6 @@ export function useTriggerScrape() {
       // Step 2: Create job document with ALL data needed for scraping
       const documentData: Record<string, unknown> = {
         site_id: siteId,
-        source: params.source, // Store the source slug too
         status: "pending",
         trigger: params.trigger,
         filters: JSON.stringify(params.filters || {}),
