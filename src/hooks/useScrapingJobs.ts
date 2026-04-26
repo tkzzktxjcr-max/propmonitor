@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { databases, DATABASE_ID, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
+import { databases, functions, DATABASE_ID, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
 import type { ScrapingJob, JobStatus, PropertySource, ScrapingJobStats, ScrapingJobFilters } from "@/types";
+
+const SCRAPER_ENGINE_ID = "scraper-engine";
 
 // ─────────────────────────────────────────────
 // FETCH ALL JOBS
@@ -57,6 +59,7 @@ export function useTriggerScrape() {
       trigger: "manual" | "agent";
       filters?: ScrapingJobFilters;
     }) => {
+      // Step 1: Create the job document
       const documentData: Record<string, unknown> = {
         site_id: params.source,
         status: "pending",
@@ -69,8 +72,9 @@ export function useTriggerScrape() {
         created_by: params.trigger === "agent" ? "hermes-agent" : "admin@realestate.be",
       };
 
-      console.log("[useTriggerScrape] Creating document with data:", documentData);
+      console.log("[useTriggerScrape] Creating job document...", documentData);
 
+      let job: ScrapingJob;
       try {
         const response = await databases.createDocument(
           DATABASE_ID,
@@ -78,11 +82,33 @@ export function useTriggerScrape() {
           ID.unique(),
           documentData
         );
-        return transformJobDocument(response) as ScrapingJob;
+        job = transformJobDocument(response) as ScrapingJob;
+        console.log("[useTriggerScrape] Job created:", job.$id);
       } catch (error) {
         logAppwriteError("useTriggerScrape - createDocument", error, documentData);
         throw error;
       }
+
+      // Step 2: Trigger the scraper-engine function
+      console.log("[useTriggerScrape] Triggering scraper-engine function...");
+      try {
+        const execution = await functions.createExecution(
+          SCRAPER_ENGINE_ID,
+          JSON.stringify({
+            jobId: job.$id,
+            siteId: params.source,
+            filters: params.filters || {},
+          }),
+          true // async execution
+        );
+        console.log("[useTriggerScrape] Scraper-engine triggered:", execution.$id);
+      } catch (error) {
+        logAppwriteError("useTriggerScrape - createExecution (scraper-engine)", error);
+        // Don't throw - the job is created, function can be retried
+        console.warn("[useTriggerScrape] Scraper-engine trigger failed, but job was created");
+      }
+
+      return job;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scraping-jobs"] });
@@ -122,7 +148,7 @@ export function useCancelJob() {
 }
 
 // ─────────────────────────────────────────────
-// UPDATE JOB STATUS (internal use)
+// UPDATE JOB STATUS
 // ─────────────────────────────────────────────
 export function useUpdateJobStatus() {
   const queryClient = useQueryClient();
