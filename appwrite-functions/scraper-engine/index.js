@@ -13,13 +13,10 @@ const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
 
 module.exports = async (req, res) => {
   console.log("[scraper-engine] Function triggered");
-  console.log("[scraper-engine] req keys:", Object.keys(req));
-  console.log("[scraper-engine] req.payload type:", typeof req.payload);
-  console.log("[scraper-engine] req.payload:", req.payload);
   
   if (!APPWRITE_API_KEY) {
     console.error("[scraper-engine] Missing APPWRITE_API_KEY");
-    return res.json({ success: false, error: "APPWRITE_API_KEY not configured" });
+    return res.json({ success: false, error: "APPWRITE_API_KEY not configured" }, 500);
   }
 
   const client = new sdk.Client();
@@ -31,30 +28,20 @@ module.exports = async (req, res) => {
   const databases = new sdk.Databases(client);
   const Query = sdk.Query;
 
-  // Parse payload - it comes as a string
+  // Parse payload
   let payload;
   try {
-    if (typeof req.payload === 'string') {
-      payload = JSON.parse(req.payload);
-    } else if (req.body && typeof req.body === 'string') {
-      payload = JSON.parse(req.body);
-    } else {
-      payload = req.payload || req.body || {};
-    }
+    payload = req.payload ? JSON.parse(req.payload) : {};
   } catch (e) {
-    console.error("[scraper-engine] Parse error:", e.message);
     payload = {};
   }
-
-  console.log("[scraper-engine] Parsed payload:", payload);
 
   const jobId = payload.jobId;
   const siteId = payload.siteId;
   const filters = payload.filters || {};
 
   if (!jobId || !siteId) {
-    console.error("[scraper-engine] Missing jobId or siteId");
-    return res.json({ success: false, error: "Missing jobId or siteId" });
+    return res.json({ success: false, error: "Missing jobId or siteId" }, 400);
   }
 
   console.log(`[scraper-engine] Processing job ${jobId} for site ${siteId}`);
@@ -75,26 +62,29 @@ module.exports = async (req, res) => {
   }
 
   async function addLog(level, message, metadata) {
-    await databases.createDocument(DATABASE_ID, COLLECTION_LOGS, "unique()", {
-      job_id: jobId,
-      site_id: siteId,
-      level,
-      message,
-      metadata: metadata ? JSON.stringify(metadata) : null,
-      created_at: new Date().toISOString(),
-    });
+    try {
+      await databases.createDocument(DATABASE_ID, COLLECTION_LOGS, "unique()", {
+        job_id: jobId,
+        site_id: siteId,
+        level,
+        message,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+        created_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error("[scraper-engine] addLog error:", e.message);
+    }
   }
 
   try {
     // Get site
     const site = await databases.getDocument(DATABASE_ID, COLLECTION_SITES, siteId);
-    console.log("[scraper-engine] Site found:", site.name);
+    console.log("[scraper-engine] Site:", site.name);
 
-    // Update job status
     await updateJobStatus("running");
     await addLog("INFO", `Starting scrape for ${site.name}`);
 
-    // Import parser
+    // Get parser
     let ParserClass;
     try {
       ParserClass = require("./parsers/" + site.slug);
@@ -107,7 +97,7 @@ module.exports = async (req, res) => {
 
     // Scrape listings
     const listings = await parser.scrapeListings(site, filters);
-    console.log("[scraper-engine] Found listings:", listings.length);
+    console.log("[scraper-engine] Found:", listings.length);
     stats.total_found = listings.length;
 
     await addLog("INFO", `Found ${listings.length} listings`);
@@ -117,7 +107,6 @@ module.exports = async (req, res) => {
       try {
         const propertyData = await parser.scrapePropertyDetail(listing.url);
         
-        // Check if exists
         const existing = await databases.listDocuments(
           DATABASE_ID, COLLECTION_PROPERTIES,
           [Query.equal("source_id", listing.sourceId), Query.limit(1)]
@@ -155,11 +144,9 @@ module.exports = async (req, res) => {
           stats.new_listings++;
         }
 
-        // Rate limit
         await new Promise(r => setTimeout(r, site.rate_limit_ms || 2000));
       } catch (err) {
         stats.failed++;
-        console.error("[scraper-engine] Failed listing:", err.message);
       }
     }
 
@@ -170,17 +157,16 @@ module.exports = async (req, res) => {
       last_scrape_status: "success",
     });
 
-    // Complete job
     await updateJobStatus("completed", stats);
-    await addLog("INFO", `Completed. New: ${stats.new_listings}, Updated: ${stats.updated}, Failed: ${stats.failed}`);
+    await addLog("INFO", `Done. New: ${stats.new_listings}, Updated: ${stats.updated}`);
 
-    console.log("[scraper-engine] Job completed:", stats);
+    console.log("[scraper-engine] Completed:", stats);
     return res.json({ success: true, stats });
 
   } catch (error) {
     console.error("[scraper-engine] Error:", error.message);
     await updateJobStatus("failed", null, error.message);
     await addLog("ERROR", error.message);
-    return res.json({ success: false, error: error.message });
+    return res.json({ success: false, error: error.message }, 500);
   }
 };
