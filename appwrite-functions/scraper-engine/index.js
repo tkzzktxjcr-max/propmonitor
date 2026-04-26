@@ -2,15 +2,33 @@
  * BelRealty - Scraper Engine
  * 
  * Uses Playwright to scrape JS-rendered websites like Immoweb, Zimmo, Immovlan.
+ * Falls back to axios if Playwright fails.
  */
 
 const sdk = require("node-appwrite");
-const { chromium } = require("playwright");
+let chromium;
+let playwrightAvailable = false;
+
+try {
+  chromium = require("playwright-core").chromium;
+  playwrightAvailable = true;
+  console.log("[scraper-engine] Playwright loaded successfully");
+} catch (e) {
+  console.log("[scraper-engine] Playwright not available, using fallback:", e.message);
+}
 
 const APPWRITE_ENDPOINT = process.env.APPWRITE_ENDPOINT || "https://backend.071098v2.duckdns.org/v1";
 const APPWRITE_PROJECT_ID = process.env.APPWRITE_PROJECT_ID || "propertymonitor";
 const APPWRITE_API_KEY = process.env.APPWRITE_API_KEY;
 const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
+
+// Try to load axios as fallback
+let axios;
+try {
+  axios = require("axios");
+} catch (e) {
+  console.log("[scraper-engine] Axios not available");
+}
 
 // Site-specific URL builders
 const SITE_URLS = {
@@ -31,13 +49,32 @@ const SITE_URLS = {
       const qs = params.toString();
       return qs ? `${url}?${qs}` : url;
     },
-    parseListings: ($) => {
+    // Immoweb's API endpoint (might work without JS rendering)
+    apiSearch: (filters = {}) => {
+      let url = "https://api.immoweb.be/rest/search/v1/search";
+      const params = new URLSearchParams();
+      if (filters.city) params.append("query", filters.city);
+      if (filters.price_min) params.append("priceMin", filters.price_min);
+      if (filters.price_max) params.append("priceMax", filters.price_max);
+      const qs = params.toString();
+      return qs ? `${url}?${qs}` : url;
+    },
+    parseListings: (html) => {
+      const cheerio = require("cheerio");
+      const $ = cheerio.load(html);
       const listings = [];
-      // Immoweb listing selectors
-      $(".search-results__item, article[data-testid='listing'], .property-card").each((i, el) => {
+      
+      // Try multiple selectors for Immoweb listings
+      $("article, .property-card, .search-result, [data-testid='listing']").each((i, el) => {
         const $el = $(el);
-        const link = $el.find("a").first().attr("href") || "";
-        if (link.includes("/property/")) {
+        let link = $el.find("a").first().attr("href") || "";
+        
+        // If no link found, try parent
+        if (!link) {
+          link = $el.parent().find("a").first().attr("href") || "";
+        }
+        
+        if (link && link.includes("/property/")) {
           const match = link.match(/\/property\/(\d+)/);
           const sourceId = match ? match[1] : "";
           if (sourceId) {
@@ -50,67 +87,61 @@ const SITE_URLS = {
       });
       return listings;
     },
-    parseProperty: ($, url) => {
+    parseProperty: (html, url) => {
+      const cheerio = require("cheerio");
+      const $ = cheerio.load(html);
+      
       const sourceId = url.match(/\/property\/(\d+)/)?.[1] || "";
-      const title = $("h1[data-testid='property-title']").text().trim() || 
-                   $("h1.property-title").text().trim() || "";
-      const priceText = $("[data-testid='price']").first().text().trim() || 
-                       $(".price").first().text().trim() || "";
-      const price = parseInt(priceText.replace(/[€\s,.]/g, "")) || 0;
+      const title = $("h1").first().text().trim() || "";
       
-      const description = $("[data-testid='description']").text().trim() ||
-                        $(".property-description").text().trim() || "";
-      
-      const specs = {};
-      $("[data-testid='property-attribute'], .specs-item").each((i, el) => {
-        const text = $(el).text().toLowerCase();
-        if (text.includes("bedroom")) specs.bedrooms = parseInt(text.match(/\d+/)?.[0]) || 0;
-        if (text.includes("bathroom")) specs.bathrooms = parseInt(text.match(/\d+/)?.[0]) || 0;
-        if (text.includes("living")) specs.surface = parseInt(text.match(/\d+/)?.[0]) || 0;
-      });
-      
-      // Fallback: get surface from first spec if not found
-      if (!specs.surface) {
-        const surfaceText = $("[data-testid='property-attribute']").first().text();
-        specs.surface = parseInt(surfaceText.match(/\d+/)?.[0]) || 0;
+      // Try multiple price selectors
+      let price = 0;
+      const priceSelectors = ["[data-testid='price']", ".price", ".property-price", "[class*='price']"];
+      for (const sel of priceSelectors) {
+        const priceText = $(sel).first().text().trim();
+        if (priceText) {
+          price = parseInt(priceText.replace(/[€\s,.]/g, "")) || 0;
+          if (price > 0) break;
+        }
       }
       
-      const address = $("[data-testid='address']").text().trim() || "";
-      const city = $("[data-testid='city']").text().trim() || 
-                   $(".city").first().text().trim() || "";
-      const postalCode = address.match(/\b\d{4}\b/)?.[0] || "";
+      const description = $("[data-testid='description'], .description, .property-description").text().trim();
+      
+      // Try to extract specs from text
+      const htmlText = $("body").text();
+      const bedroomMatch = htmlText.match(/(\d+)\s*(bedroom|bed|chambre|lit)/i);
+      const bathroomMatch = htmlText.match(/(\d+)\s*(bathroom|bath|salle|baignoire)/i);
+      const surfaceMatch = htmlText.match(/(\d+)\s*(m²|sqm|surface|m2)/i);
+      
+      const address = $("[data-testid='address'], .address").text().trim() || "";
+      const city = $("[data-testid='city'], .city").first().text().trim() || "";
       
       const photos = [];
-      $("[data-testid='gallery-image'], .gallery img, .photo img").each((i, el) => {
+      $("img[data-testid='gallery-image'], .gallery img, [class*='photo'] img").each((i, el) => {
         const src = $(el).attr("src") || $(el).attr("data-src");
-        if (src && !src.includes("placeholder") && src.startsWith("http")) {
+        if (src && !src.includes("placeholder") && src.startsWith("http") && src.length < 500) {
           photos.push(src);
         }
       });
       
-      const agentName = $("[data-testid='agent-name']").text().trim() ||
-                       $(".agent-name").text().trim() || "";
-      const agentPhone = $("[data-testid='agent-phone']").text().trim() ||
-                        $(".agent-phone").text().trim() || "";
-      const agency = $("[data-testid='agency-name']").text().trim() ||
-                   $(".agency-name").text().trim() || "";
+      const postalCode = address.match(/\b\d{4}\b/)?.[0] || "";
       
       return {
         sourceId,
         title: title || "Property in " + city,
         description,
         price,
-        surface_sqm: specs.surface || 0,
-        bedrooms: specs.bedrooms || 0,
-        bathrooms: specs.bathrooms || 0,
+        surface_sqm: surfaceMatch ? parseInt(surfaceMatch[1]) : 0,
+        bedrooms: bedroomMatch ? parseInt(bedroomMatch[1]) : 0,
+        bathrooms: bathroomMatch ? parseInt(bathroomMatch[1]) : 0,
         type: description.toLowerCase().includes("apartment") ? "apartment" : "house",
         city,
         postalCode,
         address,
         photos,
-        agentName,
-        agentPhone,
-        agency,
+        agentName: "",
+        agentPhone: "",
+        agency: "",
         url,
       };
     }
@@ -125,8 +156,11 @@ const SITE_URLS = {
       const qs = params.toString();
       return qs ? `${url}?${qs}` : url;
     },
-    parseListings: ($) => {
+    parseListings: (html) => {
+      const cheerio = require("cheerio");
+      const $ = cheerio.load(html);
       const listings = [];
+      
       $("[data-property-id], .property-item, .listing-item").each((i, el) => {
         const $el = $(el);
         const link = $el.find("a").first().attr("href") || "";
@@ -141,7 +175,10 @@ const SITE_URLS = {
       });
       return listings;
     },
-    parseProperty: ($, url) => {
+    parseProperty: (html, url) => {
+      const cheerio = require("cheerio");
+      const $ = cheerio.load(html);
+      
       const sourceId = url.match(/\/p-(\d+)/)?.[1] || "";
       const title = $("h1").first().text().trim() || "";
       const priceText = $("[class*='price']").first().text().trim() || "";
@@ -179,6 +216,7 @@ const SITE_URLS = {
 
 module.exports = async (req, res) => {
   console.log("[scraper-engine] Function triggered at", new Date().toISOString());
+  console.log("[scraper-engine] Playwright available:", playwrightAvailable);
   
   const sendResponse = (statusCode, body) => {
     if (res) return res.json(body, statusCode);
@@ -237,33 +275,67 @@ module.exports = async (req, res) => {
     const site = await databases.getDocument(DATABASE_ID, "scraping_sites", siteId);
     console.log("[scraper-engine] Site:", site.name, site.base_url);
     
-    const siteSlug = site.slug || site.name?.toLowerCase().replace(/\s+/g, "");
+    const siteSlug = site.slug || site.name?.toLowerCase().replace(/\s+/g, "").toLowerCase();
     console.log("[scraper-engine] Site slug:", siteSlug);
 
     // Get site config
     const siteConfig = SITE_URLS[siteSlug] || SITE_URLS.immoweb;
     
-    // Launch browser
-    console.log("[scraper-engine] Launching browser...");
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-    });
-    const page = await context.newPage();
+    let html;
     
-    // Scrape listings page
-    const searchUrl = siteConfig.search(filters);
-    console.log("[scraper-engine] Scraping URL:", searchUrl);
+    if (playwrightAvailable && chromium) {
+      // Try Playwright
+      console.log("[scraper-engine] Using Playwright...");
+      try {
+        browser = await chromium.launch({ 
+          headless: true,
+          args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+        const page = await browser.newPage({
+          userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        });
+        
+        const searchUrl = siteConfig.search(filters);
+        console.log("[scraper-engine] Scraping URL:", searchUrl);
+        
+        await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 60000 });
+        await page.waitForTimeout(3000); // Wait for JS
+        
+        html = await page.content();
+        await browser.close();
+        browser = null;
+      } catch (pwError) {
+        console.log("[scraper-engine] Playwright failed, using fallback:", pwError.message);
+        if (browser) {
+          try { await browser.close(); } catch(e) {}
+          browser = null;
+        }
+      }
+    }
     
-    await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 60000 });
-    await page.waitForTimeout(2000); // Wait for JS to render
+    // Fallback: Use axios + cheerio
+    if (!html) {
+      console.log("[scraper-engine] Using axios fallback...");
+      if (!axios) {
+        throw new Error("No scraping method available (Playwright and axios not available)");
+      }
+      
+      const searchUrl = siteConfig.search(filters);
+      console.log("[scraper-engine] Fetching URL:", searchUrl);
+      
+      const response = await axios.get(searchUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        timeout: 30000,
+      });
+      
+      html = response.data;
+    }
     
-    // Get page content and parse with cheerio-like selectors via page.evaluate
-    const html = await page.content();
-    const cheerio = require("cheerio");
-    const $ = cheerio.load(html);
-    
-    const listings = siteConfig.parseListings($);
+    const listings = siteConfig.parseListings(html);
     console.log("[scraper-engine] Found listings:", listings.length);
 
     const stats = { total_found: listings.length, new_listings: 0, updated: 0, failed: 0 };
@@ -275,13 +347,24 @@ module.exports = async (req, res) => {
       console.log("[scraper-engine] Processing listing", i + 1, "of", maxListings);
       
       try {
-        await page.goto(listing.url, { waitUntil: "networkidle", timeout: 60000 });
-        await page.waitForTimeout(1000);
+        let detailHtml;
         
-        const detailHtml = await page.content();
-        const $$ = cheerio.load(detailHtml);
-        const data = siteConfig.parseProperty($$, listing.url);
+        if (browser) {
+          const page = await browser.newPage();
+          await page.goto(listing.url, { waitUntil: "networkidle", timeout: 60000 });
+          await page.waitForTimeout(1000);
+          detailHtml = await page.content();
+        } else {
+          const response = await axios.get(listing.url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            },
+            timeout: 30000,
+          });
+          detailHtml = response.data;
+        }
         
+        const data = siteConfig.parseProperty(detailHtml, listing.url);
         console.log("[scraper-engine] Scraped:", data.title, "- €" + data.price);
         
         // Check if exists
@@ -290,7 +373,7 @@ module.exports = async (req, res) => {
           [Query.equal("source_id", data.sourceId), Query.equal("site_id", siteId), Query.limit(1)]
         );
 
-        const postalCode = data.postalCode || data.address?.match(/\b\d{4}\b/)?.[0] || "";
+        const postalCode = data.postalCode || "";
         const province = postalCodeToProvince(postalCode);
 
         if (existing.documents.length > 0) {
@@ -309,7 +392,7 @@ module.exports = async (req, res) => {
           await databases.createDocument(DATABASE_ID, "properties", "unique()", {
             site_id: siteId,
             source_id: data.sourceId,
-            url: data.url,
+            url: listing.url,
             title: data.title,
             description: data.description,
             price: data.price,
@@ -334,7 +417,7 @@ module.exports = async (req, res) => {
         }
         
         // Rate limit
-        await page.waitForTimeout(site.rate_limit_ms || 2000);
+        await new Promise(r => setTimeout(r, site.rate_limit_ms || 2000));
         
       } catch (err) {
         stats.failed++;
@@ -362,12 +445,13 @@ module.exports = async (req, res) => {
     });
 
     console.log("[scraper-engine] Job completed:", JSON.stringify(stats));
-    await browser.close();
+    if (browser) try { await browser.close(); } catch(e) {}
     return sendResponse(200, { success: true, jobId, stats });
 
   } catch (error) {
     console.error("[scraper-engine] Job failed:", error.message);
-    await browser?.close();
+    console.error("[scraper-engine] Stack:", error.stack);
+    if (browser) try { await browser.close(); } catch(e) {}
     
     try {
       await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
