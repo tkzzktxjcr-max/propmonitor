@@ -1,6 +1,6 @@
 import type { PropertySource, PropertyType, ScrapingJob, ScrapingJobFilters, ScrapingJobStats, JobStatus } from "@/types";
 
-const SCRAPER_API_URL = import.meta.env.VITE_SCRAPER_API_URL || "http://localhost:3001";
+const SCRAPER_API_URL = import.meta.env.VITE_SCRAPER_API_URL || "https://scrap.071098v2.duckdns.org";
 
 export interface TriggerScrapeParams {
   source: PropertySource;
@@ -125,7 +125,7 @@ export async function checkScraperHealth(): Promise<HealthResponse> {
 export function toScrapingJob(response: JobStatusResponse): ScrapingJob {
   return {
     $id: response.jobId,
-    site_id: "", // Not provided by scraper server
+    site_id: "",
     status: response.status,
     trigger: response.trigger,
     filters: response.filters,
