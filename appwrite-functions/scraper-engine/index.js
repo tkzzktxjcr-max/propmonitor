@@ -12,18 +12,11 @@ const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
 
 module.exports = async (req) => {
   console.log("[scraper-engine] Triggered");
+  console.log("[scraper-engine] Payload:", req.payload);
   
-  // Return a Response directly
-  const sendResponse = (data, status = 200) => {
-    return new Response(JSON.stringify(data), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    });
-  };
-
   if (!APPWRITE_API_KEY) {
     console.error("[scraper-engine] Missing API key");
-    return sendResponse({ success: false, error: "Missing API key" }, 500);
+    return { success: false, error: "Missing API key" };
   }
 
   const client = new sdk.Client()
@@ -44,41 +37,24 @@ module.exports = async (req) => {
   const { jobId, siteId, filters = {} } = payload;
 
   if (!jobId || !siteId) {
-    return sendResponse({ success: false, error: "Missing jobId or siteId" }, 400);
+    return { success: false, error: "Missing jobId or siteId" };
   }
 
   console.log(`[scraper-engine] Job: ${jobId}, Site: ${siteId}`);
-
-  const updateJob = async (status, stats, error) => {
-    const data = { status };
-    if (stats) data.stats = JSON.stringify(stats);
-    if (error) data.error_message = error;
-    if (status === "completed" || status === "failed") {
-      data.completed_at = new Date().toISOString();
-    }
-    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, data);
-  };
-
-  const addLog = async (level, message) => {
-    try {
-      await databases.createDocument(DATABASE_ID, "scraping_logs", "unique()", {
-        job_id: jobId,
-        site_id: siteId,
-        level,
-        message,
-        created_at: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.error("[scraper-engine] Log error:", e.message);
-    }
-  };
 
   try {
     const site = await databases.getDocument(DATABASE_ID, "scraping_sites", siteId);
     console.log("[scraper-engine] Site:", site.name);
 
-    await updateJob("running");
-    await addLog("INFO", `Starting scrape for ${site.name}`);
+    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, { status: "running" });
+    
+    try {
+      await databases.createDocument(DATABASE_ID, "scraping_logs", "unique()", {
+        job_id: jobId, site_id: siteId, level: "INFO",
+        message: `Starting scrape for ${site.name}`,
+        created_at: new Date().toISOString(),
+      });
+    } catch (e) {}
 
     let Parser;
     try {
@@ -88,11 +64,10 @@ module.exports = async (req) => {
     }
     const parser = new Parser();
 
-    let stats = { total_found: 0, new_listings: 0, updated: 0, failed: 0 };
-
     const listings = await parser.scrapeListings(site, filters);
-    console.log("[scraper-engine] Listings:", listings.length);
-    stats.total_found = listings.length;
+    console.log("[scraper-engine] Listings found:", listings.length);
+
+    const stats = { total_found: listings.length, new_listings: 0, updated: 0, failed: 0 };
 
     for (const listing of listings) {
       try {
@@ -138,7 +113,6 @@ module.exports = async (req) => {
         await new Promise(r => setTimeout(r, site.rate_limit_ms || 2000));
       } catch (err) {
         stats.failed++;
-        console.error("[scraper-engine] Listing error:", err.message);
       }
     }
 
@@ -148,16 +122,42 @@ module.exports = async (req) => {
       last_scrape_status: "success",
     });
 
-    await updateJob("completed", stats);
-    await addLog("INFO", `Done. New: ${stats.new_listings}, Updated: ${stats.updated}`);
+    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
+      status: "completed",
+      stats: JSON.stringify(stats),
+      completed_at: new Date().toISOString(),
+    });
+
+    try {
+      await databases.createDocument(DATABASE_ID, "scraping_logs", "unique()", {
+        job_id: jobId, site_id: siteId, level: "INFO",
+        message: `Done. New: ${stats.new_listings}, Updated: ${stats.updated}`,
+        created_at: new Date().toISOString(),
+      });
+    } catch (e) {}
 
     console.log("[scraper-engine] Completed:", stats);
-    return sendResponse({ success: true, stats });
+    return { success: true, stats };
 
   } catch (error) {
     console.error("[scraper-engine] Error:", error.message);
-    await updateJob("failed", null, error.message);
-    await addLog("ERROR", error.message);
-    return sendResponse({ success: false, error: error.message }, 500);
+    
+    try {
+      await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
+        status: "failed",
+        error_message: error.message,
+        completed_at: new Date().toISOString(),
+      });
+    } catch (e) {}
+    
+    try {
+      await databases.createDocument(DATABASE_ID, "scraping_logs", "unique()", {
+        job_id: jobId, site_id: siteId, level: "ERROR",
+        message: error.message,
+        created_at: new Date().toISOString(),
+      });
+    } catch (e) {}
+
+    return { success: false, error: error.message };
   }
 };
