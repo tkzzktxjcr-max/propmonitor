@@ -38,6 +38,18 @@ import type { ScrapingSite } from "@/types";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────
+// LOG HELPER
+// ─────────────────────────────────────────────
+const formatDate = (dateStr: string | null | undefined): string => {
+  if (!dateStr) return "Never";
+  try {
+    return new Date(dateStr).toLocaleString();
+  } catch {
+    return "Invalid date";
+  }
+};
+
+// ─────────────────────────────────────────────
 // SITE EDITOR DIALOG
 // ─────────────────────────────────────────────
 interface SiteEditorProps {
@@ -203,11 +215,6 @@ interface SiteCardProps {
 function SiteCard({ site, onEdit, onDelete }: SiteCardProps) {
   const { data: errorCount } = useRecentErrors(site.$id);
   const toggleActive = useUpdateSite();
-
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return "Never";
-    return new Date(dateStr).toLocaleString();
-  };
 
   const handleToggleActive = () => {
     toggleActive.mutate({
