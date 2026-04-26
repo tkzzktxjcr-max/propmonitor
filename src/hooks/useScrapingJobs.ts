@@ -125,20 +125,20 @@ export function useTriggerScrape() {
       }
 
       // Step 3: Trigger the scraper-engine function
-      const functionPayload = JSON.stringify({
+      const payload = {
         jobId: job.$id,
         siteId: siteId,
         filters: params.filters || {},
-      });
+      };
 
       console.log("[useTriggerScrape] Triggering scraper-engine...");
       try {
         const execution = await functions.createExecution(
           SCRAPER_ENGINE_ID,
-          functionPayload,
+          JSON.stringify(payload),
           false
         );
-        console.log("[useTriggerScrape] Execution triggered:", execution.$id, execution.status);
+        console.log("[useTriggerScrape] Execution:", execution.$id, execution.status);
       } catch (error) {
         logAppwriteError("useTriggerScrape - createExecution", error);
         console.warn("[useTriggerScrape] Function trigger failed, but job was created");

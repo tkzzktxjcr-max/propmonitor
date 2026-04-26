@@ -12,7 +12,9 @@ const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
 
 module.exports = async (req) => {
   console.log("[scraper-engine] Triggered");
-  console.log("[scraper-engine] Payload:", req.payload);
+  console.log("[scraper-engine] req keys:", Object.keys(req));
+  console.log("[scraper-engine] req.headers:", req.headers);
+  console.log("[scraper-engine] req.payload:", req.payload);
   
   if (!APPWRITE_API_KEY) {
     console.error("[scraper-engine] Missing API key");
@@ -27,11 +29,37 @@ module.exports = async (req) => {
   const databases = new sdk.Databases(client);
   const Query = sdk.Query;
 
-  let payload;
-  try {
-    payload = req.payload ? JSON.parse(req.payload) : {};
-  } catch {
-    payload = {};
+  // Try to get payload from various sources
+  let payload = null;
+  
+  // 1. Try req.payload (standard Appwrite)
+  if (req.payload) {
+    try {
+      payload = typeof req.payload === 'string' ? JSON.parse(req.payload) : req.payload;
+    } catch {}
+  }
+  
+  // 2. Try req.headers['x-appwrite-data'] (custom header)
+  if (!payload && req.headers) {
+    const headerData = req.headers['x-appwrite-data'];
+    if (headerData) {
+      try {
+        payload = JSON.parse(headerData);
+      } catch {}
+    }
+  }
+  
+  // 3. Try to parse from body if it's a string
+  if (!payload && req.body) {
+    try {
+      payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    } catch {}
+  }
+
+  console.log("[scraper-engine] Parsed payload:", payload);
+
+  if (!payload) {
+    return { success: false, error: "No payload received" };
   }
 
   const { jobId, siteId, filters = {} } = payload;
@@ -48,14 +76,6 @@ module.exports = async (req) => {
 
     await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, { status: "running" });
     
-    try {
-      await databases.createDocument(DATABASE_ID, "scraping_logs", "unique()", {
-        job_id: jobId, site_id: siteId, level: "INFO",
-        message: `Starting scrape for ${site.name}`,
-        created_at: new Date().toISOString(),
-      });
-    } catch (e) {}
-
     let Parser;
     try {
       Parser = require("./parsers/" + site.slug);
@@ -65,7 +85,7 @@ module.exports = async (req) => {
     const parser = new Parser();
 
     const listings = await parser.scrapeListings(site, filters);
-    console.log("[scraper-engine] Listings found:", listings.length);
+    console.log("[scraper-engine] Listings:", listings.length);
 
     const stats = { total_found: listings.length, new_listings: 0, updated: 0, failed: 0 };
 
@@ -128,14 +148,6 @@ module.exports = async (req) => {
       completed_at: new Date().toISOString(),
     });
 
-    try {
-      await databases.createDocument(DATABASE_ID, "scraping_logs", "unique()", {
-        job_id: jobId, site_id: siteId, level: "INFO",
-        message: `Done. New: ${stats.new_listings}, Updated: ${stats.updated}`,
-        created_at: new Date().toISOString(),
-      });
-    } catch (e) {}
-
     console.log("[scraper-engine] Completed:", stats);
     return { success: true, stats };
 
@@ -148,15 +160,7 @@ module.exports = async (req) => {
         error_message: error.message,
         completed_at: new Date().toISOString(),
       });
-    } catch (e) {}
-    
-    try {
-      await databases.createDocument(DATABASE_ID, "scraping_logs", "unique()", {
-        job_id: jobId, site_id: siteId, level: "ERROR",
-        message: error.message,
-        created_at: new Date().toISOString(),
-      });
-    } catch (e) {}
+    } catch {}
 
     return { success: false, error: error.message };
   }
