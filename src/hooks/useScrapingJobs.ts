@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { databases, functions, DATABASE_ID, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
+import { databases, functions, DATABASE_ID, COLLECTION_SITES, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
 import type { ScrapingJob, JobStatus, PropertySource, ScrapingJobStats, ScrapingJobFilters } from "@/types";
 
 const SCRAPER_ENGINE_ID = "scraper-engine";
@@ -48,6 +48,35 @@ export function useScrapingJob(id: string) {
 }
 
 // ─────────────────────────────────────────────
+// HELPER: Get site document ID by slug
+// ─────────────────────────────────────────────
+async function getSiteIdBySlug(source: PropertySource): Promise<string | null> {
+  try {
+    // Try to find site by slug
+    const response = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_SITES,
+      [Query.equal("slug", source), Query.limit(1)]
+    );
+    
+    if (response.documents.length > 0) {
+      return response.documents[0].$id;
+    }
+    
+    // If not found by slug, maybe the source IS the document ID
+    try {
+      await databases.getDocument(DATABASE_ID, COLLECTION_SITES, source);
+      return source;
+    } catch {
+      return null;
+    }
+  } catch (error) {
+    console.error("[getSiteIdBySlug] Error:", error);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────
 // TRIGGER NEW SCRAPE
 // ─────────────────────────────────────────────
 export function useTriggerScrape() {
@@ -59,9 +88,18 @@ export function useTriggerScrape() {
       trigger: "manual" | "agent";
       filters?: ScrapingJobFilters;
     }) => {
-      // Step 1: Create the job document
+      // Step 1: Get the actual site document ID
+      console.log("[useTriggerScrape] Looking up site by slug:", params.source);
+      const siteId = await getSiteIdBySlug(params.source);
+      
+      if (!siteId) {
+        throw new Error(`Site not found: ${params.source}. Please create a site with slug "${params.source}" in the scraping_sites collection first.`);
+      }
+      console.log("[useTriggerScrape] Found site ID:", siteId);
+
+      // Step 2: Create the job document with the correct site document ID
       const documentData: Record<string, unknown> = {
-        site_id: params.source,
+        site_id: siteId, // Use the actual document ID, not the slug
         status: "pending",
         trigger: params.trigger,
         filters: JSON.stringify(params.filters || {}),
@@ -89,14 +127,14 @@ export function useTriggerScrape() {
         throw error;
       }
 
-      // Step 2: Trigger the scraper-engine function
+      // Step 3: Trigger the scraper-engine function
       console.log("[useTriggerScrape] Triggering scraper-engine function...");
       try {
         const execution = await functions.createExecution(
           SCRAPER_ENGINE_ID,
           JSON.stringify({
             jobId: job.$id,
-            siteId: params.source,
+            siteId: siteId, // Use the actual document ID
             filters: params.filters || {},
           }),
           true // async execution
@@ -104,7 +142,6 @@ export function useTriggerScrape() {
         console.log("[useTriggerScrape] Scraper-engine triggered:", execution.$id);
       } catch (error) {
         logAppwriteError("useTriggerScrape - createExecution (scraper-engine)", error);
-        // Don't throw - the job is created, function can be retried
         console.warn("[useTriggerScrape] Scraper-engine trigger failed, but job was created");
       }
 
