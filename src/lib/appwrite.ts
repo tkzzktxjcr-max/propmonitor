@@ -6,6 +6,7 @@ import { Client, Account, Databases, Functions, Storage, Teams, ID, Query } from
 const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || "https://backend.071098v2.duckdns.org/v1";
 const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || "propertymonitor";
 const APPWRITE_DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID || "belrealty-db";
+const APPWRITE_API_KEY = import.meta.env.VITE_APPWRITE_API_KEY || "";
 
 // ─────────────────────────────────────────────
 // COLLECTIONS IDs
@@ -38,12 +39,36 @@ export const teams = new Teams(client);
 export const DATABASE_ID = APPWRITE_DATABASE_ID;
 
 // ─────────────────────────────────────────────
+// HTTP HELPER for Function Execution
+// ─────────────────────────────────────────────
+export async function executeFunction(functionId: string, payload: unknown, async = false): Promise<{ status: string; response: string }> {
+  const url = `${APPWRITE_ENDPOINT}/functions/${functionId}/executions`;
+  
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Appwrite-Project": APPWRITE_PROJECT_ID,
+      ...(APPWRITE_API_KEY && { "X-Appwrite-Key": APPWRITE_API_KEY }),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Function execution failed: ${response.status} - ${error}`);
+  }
+
+  const result = await response.json();
+  return {
+    status: result.status,
+    response: result.response || "",
+  };
+}
+
+// ─────────────────────────────────────────────
 // ERROR HANDLING HELPERS
 // ─────────────────────────────────────────────
-
-/**
- * Parse Appwrite error response for better debugging
- */
 export function parseAppwriteError(error: unknown): { message: string; code?: number; type?: string; details?: unknown } {
   if (error && typeof error === 'object') {
     const err = error as Record<string, unknown>;
@@ -69,9 +94,6 @@ export function parseAppwriteError(error: unknown): { message: string; code?: nu
   return { message: String(error) };
 }
 
-/**
- * Log Appwrite error with context
- */
 export function logAppwriteError(context: string, error: unknown, data?: unknown): void {
   const parsed = parseAppwriteError(error);
   
