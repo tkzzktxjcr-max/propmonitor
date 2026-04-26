@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { databases, DATABASE_ID, COLLECTION_JOBS, ID, Query, isDemoMode } from "@/lib/appwrite";
+import { databases, DATABASE_ID, COLLECTION_JOBS, ID, Query, isDemoMode, logAppwriteError } from "@/lib/appwrite";
 import type { ScrapingJob, JobStatus, PropertySource, ScrapingJobStats, ScrapingJobFilters } from "@/types";
 
 // ─────────────────────────────────────────────
@@ -83,15 +83,19 @@ export function useScrapingJobs() {
         );
       }
 
-      const response = await databases.listDocuments(DATABASE_ID, COLLECTION_JOBS, [
-        Query.orderDesc("started_at"),
-        Query.limit(50),
-      ]);
-
-      return response.documents.map(transformJobDocument) as ScrapingJob[];
+      try {
+        const response = await databases.listDocuments(DATABASE_ID, COLLECTION_JOBS, [
+          Query.orderDesc("started_at"),
+          Query.limit(50),
+        ]);
+        return response.documents.map(transformJobDocument) as ScrapingJob[];
+      } catch (error) {
+        logAppwriteError("useScrapingJobs - listDocuments", error);
+        throw error;
+      }
     },
     staleTime: 10000,
-    refetchInterval: 30000, // Poll every 30s for running jobs
+    refetchInterval: 30000,
   });
 }
 
@@ -106,11 +110,16 @@ export function useScrapingJob(id: string) {
         return mockJobs.find((j) => j.$id === id) || null;
       }
 
-      const response = await databases.getDocument(DATABASE_ID, COLLECTION_JOBS, id);
-      return transformJobDocument(response) as ScrapingJob;
+      try {
+        const response = await databases.getDocument(DATABASE_ID, COLLECTION_JOBS, id);
+        return transformJobDocument(response) as ScrapingJob;
+      } catch (error) {
+        logAppwriteError(`useScrapingJob - getDocument(${id})`, error);
+        throw error;
+      }
     },
     enabled: !!id,
-    refetchInterval: 5000, // Poll every 5s for active jobs
+    refetchInterval: 5000,
   });
 }
 
@@ -143,21 +152,33 @@ export function useTriggerScrape() {
         return newJob;
       }
 
-      const response = await databases.createDocument(
-        DATABASE_ID,
-        COLLECTION_JOBS,
-        ID.unique(),
-        {
-          site_id: params.source,
-          status: "pending",
-          trigger: params.trigger,
-          filters: params.filters || {},
-          stats: { total_found: 0, new_listings: 0, updated: 0, failed: 0 },
-          created_by: params.trigger === "agent" ? "hermes-agent" : "admin@realestate.be",
-        }
-      );
+      // Build the document data - serialize filters and stats as JSON strings
+      const documentData: Record<string, unknown> = {
+        site_id: params.source,
+        status: "pending",
+        trigger: params.trigger,
+        filters: JSON.stringify(params.filters || {}),
+        stats: JSON.stringify({ total_found: 0, new_listings: 0, updated: 0, failed: 0 }),
+        started_at: new Date().toISOString(),
+        completed_at: "",
+        error_message: "",
+        created_by: params.trigger === "agent" ? "hermes-agent" : "admin@realestate.be",
+      };
 
-      return transformJobDocument(response) as ScrapingJob;
+      console.log("[useTriggerScrape] Creating document with data:", documentData);
+
+      try {
+        const response = await databases.createDocument(
+          DATABASE_ID,
+          COLLECTION_JOBS,
+          ID.unique(),
+          documentData
+        );
+        return transformJobDocument(response) as ScrapingJob;
+      } catch (error) {
+        logAppwriteError("useTriggerScrape - createDocument", error, documentData);
+        throw error;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scraping-jobs"] });
@@ -184,18 +205,22 @@ export function useCancelJob() {
         throw new Error("Job cannot be cancelled");
       }
 
-      const response = await databases.updateDocument(
-        DATABASE_ID,
-        COLLECTION_JOBS,
-        jobId,
-        {
-          status: "failed",
-          error_message: "Cancelled by user",
-          completed_at: new Date().toISOString(),
-        }
-      );
-
-      return transformJobDocument(response) as ScrapingJob;
+      try {
+        const response = await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTION_JOBS,
+          jobId,
+          {
+            status: "failed",
+            error_message: "Cancelled by user",
+            completed_at: new Date().toISOString(),
+          }
+        );
+        return transformJobDocument(response) as ScrapingJob;
+      } catch (error) {
+        logAppwriteError(`useCancelJob - updateDocument(${jobId})`, error);
+        throw error;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scraping-jobs"] });
@@ -235,21 +260,25 @@ export function useUpdateJobStatus() {
         throw new Error("Job not found");
       }
 
-      const updateData: any = { status };
-      if (stats) updateData.stats = stats;
+      const updateData: Record<string, unknown> = { status };
+      if (stats) updateData.stats = JSON.stringify(stats);
       if (error_message) updateData.error_message = error_message;
       if (status === "completed" || status === "failed") {
         updateData.completed_at = new Date().toISOString();
       }
 
-      const response = await databases.updateDocument(
-        DATABASE_ID,
-        COLLECTION_JOBS,
-        jobId,
-        updateData
-      );
-
-      return transformJobDocument(response) as ScrapingJob;
+      try {
+        const response = await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTION_JOBS,
+          jobId,
+          updateData
+        );
+        return transformJobDocument(response) as ScrapingJob;
+      } catch (error) {
+        logAppwriteError(`useUpdateJobStatus - updateDocument(${jobId})`, error, updateData);
+        throw error;
+      }
     },
     onSuccess: (_, { jobId }) => {
       queryClient.invalidateQueries({ queryKey: ["scraping-jobs"] });
@@ -261,22 +290,38 @@ export function useUpdateJobStatus() {
 // ─────────────────────────────────────────────
 // HELPER: Transform Appwrite document to ScrapingJob
 // ─────────────────────────────────────────────
-function transformJobDocument(doc: any): ScrapingJob {
+function transformJobDocument(doc: unknown): ScrapingJob {
+  const d = doc as Record<string, unknown>;
+  
+  // Parse JSON strings if needed
+  let filters = d.filters;
+  if (typeof filters === "string") {
+    try {
+      filters = JSON.parse(filters);
+    } catch {
+      filters = {};
+    }
+  }
+
+  let stats = d.stats;
+  if (typeof stats === "string") {
+    try {
+      stats = JSON.parse(stats);
+    } catch {
+      stats = { total_found: 0, new_listings: 0, updated: 0, failed: 0 };
+    }
+  }
+
   return {
-    $id: doc.$id,
-    site_id: doc.site_id,
-    status: doc.status,
-    trigger: doc.trigger,
-    filters: doc.filters || {},
-    stats: doc.stats || {
-      total_found: 0,
-      new_listings: 0,
-      updated: 0,
-      failed: 0,
-    },
-    started_at: doc.started_at || "",
-    completed_at: doc.completed_at || "",
-    error_message: doc.error_message || "",
-    created_by: doc.created_by || "unknown",
+    $id: d.$id as string,
+    site_id: d.site_id as string,
+    status: d.status as ScrapingJob["status"],
+    trigger: d.trigger as ScrapingJob["trigger"],
+    filters: (filters || {}) as ScrapingJobFilters,
+    stats: (stats || { total_found: 0, new_listings: 0, updated: 0, failed: 0 }) as ScrapingJobStats,
+    started_at: (d.started_at as string) || "",
+    completed_at: (d.completed_at as string) || "",
+    error_message: (d.error_message as string) || "",
+    created_by: (d.created_by as string) || "unknown",
   };
 }

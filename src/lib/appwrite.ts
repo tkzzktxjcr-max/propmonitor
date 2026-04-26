@@ -38,6 +38,60 @@ export const teams = new Teams(client);
 export const DATABASE_ID = APPWRITE_DATABASE_ID;
 
 // ─────────────────────────────────────────────
+// ERROR HANDLING HELPERS
+// ─────────────────────────────────────────────
+
+/**
+ * Parse Appwrite error response for better debugging
+ */
+export function parseAppwriteError(error: unknown): { message: string; code?: number; type?: string; details?: unknown } {
+  if (error && typeof error === 'object') {
+    const err = error as Record<string, unknown>;
+    
+    // Appwrite SDK errors have this structure
+    if (err.response) {
+      const response = err.response as Record<string, unknown>;
+      return {
+        message: (response.message as string) || 'Unknown error',
+        code: err.code as number,
+        type: err.type as string,
+        details: response,
+      };
+    }
+    
+    // Direct message
+    if (err.message) {
+      return {
+        message: err.message as string,
+        code: err.code as number,
+      };
+    }
+  }
+  
+  return { message: String(error) };
+}
+
+/**
+ * Log Appwrite error with context
+ */
+export function logAppwriteError(context: string, error: unknown, data?: unknown): void {
+  const parsed = parseAppwriteError(error);
+  
+  console.error(`[Appwrite Error] ${context}`);
+  console.error(`  Message: ${parsed.message}`);
+  console.error(`  Code: ${parsed.code || 'N/A'}`);
+  console.error(`  Type: ${parsed.type || 'N/A'}`);
+  
+  if (data) {
+    console.error(`  Data sent:`, data);
+  }
+  
+  if (parsed.details) {
+    console.error(`  Details:`, parsed.details);
+  }
+}
+
+// ─────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────
 
