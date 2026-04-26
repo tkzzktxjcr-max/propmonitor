@@ -59,8 +59,11 @@ export function useTriggerScrape() {
       trigger: "manual" | "agent";
       filters?: ScrapingJobFilters;
     }) => {
+      console.log("[useTriggerScrape] Starting with params:", params);
+
       // Step 1: Get site document ID
       let siteId: string;
+      let siteSlug: string;
       try {
         const response = await databases.listDocuments(
           DATABASE_ID,
@@ -73,7 +76,8 @@ export function useTriggerScrape() {
         }
         
         siteId = response.documents[0].$id;
-        console.log("[useTriggerScrape] Site ID:", siteId);
+        siteSlug = response.documents[0].slug;
+        console.log("[useTriggerScrape] Site found:", siteSlug, "ID:", siteId);
       } catch (error) {
         logAppwriteError("useTriggerScrape - getSite", error);
         throw error;
@@ -108,18 +112,19 @@ export function useTriggerScrape() {
         throw error;
       }
 
-      // Step 3: Trigger function WITHOUT payload - it will read from database
-      console.log("[useTriggerScrape] Triggering scraper-engine (no payload - reads from DB)...");
+      // Step 3: Trigger function ASYNC - it will read from database
+      console.log("[useTriggerScrape] Triggering scraper-engine (async)...");
       try {
         const execution = await functions.createExecution(
           SCRAPER_ENGINE_ID,
-          "", // Empty payload - function reads job from database
-          false // async
+          JSON.stringify({ source: params.source, siteId }), // Pass for debugging
+          true // async = true
         );
-        console.log("[useTriggerScrape] Execution triggered:", execution.$id);
+        console.log("[useTriggerScrape] Execution triggered:", execution.$id, "status:", execution.status);
       } catch (error) {
         logAppwriteError("useTriggerScrape - createExecution", error);
-        // Don't throw - job is created, function can be retried
+        console.error("[useTriggerScrape] Function trigger failed (job still created):", error);
+        // Don't throw - job is created, function can be retried manually
       }
 
       return job;
