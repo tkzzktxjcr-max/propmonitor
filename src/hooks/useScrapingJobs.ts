@@ -125,21 +125,20 @@ export function useTriggerScrape() {
       }
 
       // Step 3: Trigger the scraper-engine function
-      // Data must be a string for the SDK
       const functionPayload = JSON.stringify({
         jobId: job.$id,
         siteId: siteId,
         filters: params.filters || {},
       });
 
-      console.log("[useTriggerScrape] Triggering scraper-engine with payload:", functionPayload);
+      console.log("[useTriggerScrape] Triggering scraper-engine...");
       try {
         const execution = await functions.createExecution(
           SCRAPER_ENGINE_ID,
           functionPayload,
-          false // synchronous
+          false
         );
-        console.log("[useTriggerScrape] Execution result:", execution.$id, execution.status);
+        console.log("[useTriggerScrape] Execution triggered:", execution.$id, execution.status);
       } catch (error) {
         logAppwriteError("useTriggerScrape - createExecution", error);
         console.warn("[useTriggerScrape] Function trigger failed, but job was created");
