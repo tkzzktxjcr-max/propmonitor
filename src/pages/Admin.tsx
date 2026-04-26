@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { JobList, ScrapeTrigger } from "@/components/admin";
+import { JobList, ScrapeTrigger, ScheduleManager } from "@/components/admin";
 import { SiteManager } from "@/components/admin/SiteManager";
 import { ScrapingLogs } from "@/components/admin/ScrapingLogs";
 import { useScrapingJobs, useTriggerScrape, useCancelJob } from "@/hooks/useScrapingJobs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Database, Shield, Activity, Settings, Globe, FileText } from "lucide-react";
+import { Database, Shield, Activity, Settings, Globe, FileText, Calendar } from "lucide-react";
 
 export default function Admin() {
   const { data: jobs, isLoading } = useScrapingJobs();
@@ -107,27 +107,31 @@ export default function Admin() {
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="mb-6">
-                <TabsTrigger value="jobs" className="gap-2">
-                  <Database className="h-4 w-4" />
-                  Scraping Jobs
-                </TabsTrigger>
-                <TabsTrigger value="sites" className="gap-2">
-                  <Globe className="h-4 w-4" />
-                  Sites
-                </TabsTrigger>
-                <TabsTrigger value="logs" className="gap-2">
-                  <FileText className="h-4 w-4" />
-                  Logs
-                </TabsTrigger>
-                <TabsTrigger value="trigger" className="gap-2">
-                  <Shield className="h-4 w-4" />
-                  Trigger Scrape
-                </TabsTrigger>
-                <TabsTrigger value="settings" className="gap-2">
-                  <Settings className="h-4 w-4" />
-                  Settings
-                </TabsTrigger>
-              </TabsList>
+                              <TabsTrigger value="jobs" className="gap-2">
+                                <Database className="h-4 w-4" />
+                                Scraping Jobs
+                              </TabsTrigger>
+                              <TabsTrigger value="sites" className="gap-2">
+                                <Globe className="h-4 w-4" />
+                                Sites
+                              </TabsTrigger>
+                              <TabsTrigger value="schedules" className="gap-2">
+                                <Calendar className="h-4 w-4" />
+                                Schedules
+                              </TabsTrigger>
+                              <TabsTrigger value="logs" className="gap-2">
+                                <FileText className="h-4 w-4" />
+                                Logs
+                              </TabsTrigger>
+                              <TabsTrigger value="trigger" className="gap-2">
+                                <Shield className="h-4 w-4" />
+                                Trigger Scrape
+                              </TabsTrigger>
+                              <TabsTrigger value="settings" className="gap-2">
+                                <Settings className="h-4 w-4" />
+                                Settings
+                              </TabsTrigger>
+                            </TabsList>
 
               <TabsContent value="jobs">
                 <Card>
@@ -145,10 +149,14 @@ export default function Admin() {
               </TabsContent>
 
               <TabsContent value="sites">
-                <SiteManager />
-              </TabsContent>
-
-              <TabsContent value="logs">
+                              <SiteManager />
+                            </TabsContent>
+              
+                            <TabsContent value="schedules">
+                              <ScheduleManager />
+                            </TabsContent>
+              
+                            <TabsContent value="logs">
                 <ScrapingLogs />
               </TabsContent>
 

@@ -4,7 +4,10 @@ import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { scrapeRouter } from "./routes/scrape.js";
+import { schedulesRouter } from "./routes/schedules.js";
 import { browserPool } from "./browser/manager.js";
+import { scheduler } from "./scheduler/scheduler.js";
+import { jobQueue } from "./jobs/queue.js";
 
 // ─────────────────────────────────────────────
 // EXPRESS APP SETUP
@@ -34,16 +37,22 @@ app.use(globalLimiter);
 
 // Health check endpoint
 app.get("/health", (_req, res) => {
+  const queueStatus = jobQueue.getStatus();
+  const schedulerStatus = scheduler.getStatus();
+  
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
-    version: "1.0.0",
+    version: "1.1.0",
     environment: config.server.nodeEnv,
+    queue: queueStatus,
+    scheduler: schedulerStatus,
   });
 });
 
 // API routes
 app.use("/api/scrape", scrapeRouter);
+app.use("/api/schedules", schedulesRouter);
 
 // ─────────────────────────────────────────────
 // ERROR HANDLING
@@ -70,18 +79,28 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 // START SERVER
 // ─────────────────────────────────────────────
 
-const server = app.listen(config.server.port, () => {
-  logger.info(`🚀 Scraper server started`, {
+const server = app.listen(config.server.port, async () => {
+  logger.info(`🚀 Scraper server starting...`, {
     port: config.server.port,
     environment: config.server.nodeEnv,
     headless: config.browser.headless,
     maxConcurrent: config.rateLimit.maxConcurrentJobs,
   });
+
+  // Initialize scheduler
+  try {
+    await scheduler.initialize();
+    logger.info("✅ Scheduler initialized successfully");
+  } catch (error) {
+    logger.error("❌ Failed to initialize scheduler", { error });
+    // Server will still start, but scheduled jobs won't run
+  }
 });
 
 // Graceful shutdown
 process.on("SIGINT", async () => {
   logger.info("SIGINT received, shutting down gracefully...");
+  await scheduler.shutdown();
   await browserPool.cleanup();
   server.close(() => {
     logger.info("Server closed");
@@ -91,6 +110,7 @@ process.on("SIGINT", async () => {
 
 process.on("SIGTERM", async () => {
   logger.info("SIGTERM received, shutting down gracefully...");
+  await scheduler.shutdown();
   await browserPool.cleanup();
   server.close(() => {
     logger.info("Server closed");
