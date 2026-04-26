@@ -52,7 +52,6 @@ export function useScrapingJob(id: string) {
 // ─────────────────────────────────────────────
 async function getSiteIdBySlug(source: PropertySource): Promise<string | null> {
   try {
-    // Try to find site by slug
     const response = await databases.listDocuments(
       DATABASE_ID,
       COLLECTION_SITES,
@@ -63,7 +62,6 @@ async function getSiteIdBySlug(source: PropertySource): Promise<string | null> {
       return response.documents[0].$id;
     }
     
-    // If not found by slug, maybe the source IS the document ID
     try {
       await databases.getDocument(DATABASE_ID, COLLECTION_SITES, source);
       return source;
@@ -93,13 +91,13 @@ export function useTriggerScrape() {
       const siteId = await getSiteIdBySlug(params.source);
       
       if (!siteId) {
-        throw new Error(`Site not found: ${params.source}. Please create a site with slug "${params.source}" in the scraping_sites collection first.`);
+        throw new Error(`Site not found: ${params.source}`);
       }
       console.log("[useTriggerScrape] Found site ID:", siteId);
 
-      // Step 2: Create the job document with the correct site document ID
+      // Step 2: Create the job document
       const documentData: Record<string, unknown> = {
-        site_id: siteId, // Use the actual document ID, not the slug
+        site_id: siteId,
         status: "pending",
         trigger: params.trigger,
         filters: JSON.stringify(params.filters || {}),
@@ -110,8 +108,7 @@ export function useTriggerScrape() {
         created_by: params.trigger === "agent" ? "hermes-agent" : "admin@realestate.be",
       };
 
-      console.log("[useTriggerScrape] Creating job document...", documentData);
-
+      console.log("[useTriggerScrape] Creating job document...");
       let job: ScrapingJob;
       try {
         const response = await databases.createDocument(
@@ -128,21 +125,23 @@ export function useTriggerScrape() {
       }
 
       // Step 3: Trigger the scraper-engine function
-      console.log("[useTriggerScrape] Triggering scraper-engine function...");
+      const functionPayload = JSON.stringify({
+        jobId: job.$id,
+        siteId: siteId,
+        filters: params.filters || {},
+      });
+
+      console.log("[useTriggerScrape] Triggering scraper-engine with payload:", functionPayload);
       try {
         const execution = await functions.createExecution(
           SCRAPER_ENGINE_ID,
-          JSON.stringify({
-            jobId: job.$id,
-            siteId: siteId, // Use the actual document ID
-            filters: params.filters || {},
-          }),
-          true // async execution
+          functionPayload,
+          false // synchronous execution
         );
-        console.log("[useTriggerScrape] Scraper-engine triggered:", execution.$id);
+        console.log("[useTriggerScrape] Execution triggered. Status:", execution.status);
       } catch (error) {
-        logAppwriteError("useTriggerScrape - createExecution (scraper-engine)", error);
-        console.warn("[useTriggerScrape] Scraper-engine trigger failed, but job was created");
+        logAppwriteError("useTriggerScrape - createExecution", error);
+        console.warn("[useTriggerScrape] Function trigger failed, job is created");
       }
 
       return job;
