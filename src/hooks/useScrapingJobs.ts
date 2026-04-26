@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { databases, executeFunction, DATABASE_ID, COLLECTION_SITES, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
+import { databases, functions, DATABASE_ID, COLLECTION_SITES, COLLECTION_JOBS, ID, Query, logAppwriteError } from "@/lib/appwrite";
 import type { ScrapingJob, JobStatus, PropertySource, ScrapingJobStats, ScrapingJobFilters } from "@/types";
 
 const SCRAPER_ENGINE_ID = "scraper-engine";
@@ -124,19 +124,24 @@ export function useTriggerScrape() {
         throw error;
       }
 
-      // Step 3: Trigger the scraper-engine function via HTTP
-      const functionPayload = {
+      // Step 3: Trigger the scraper-engine function
+      // Data must be a string for the SDK
+      const functionPayload = JSON.stringify({
         jobId: job.$id,
         siteId: siteId,
         filters: params.filters || {},
-      };
+      });
 
       console.log("[useTriggerScrape] Triggering scraper-engine with payload:", functionPayload);
       try {
-        const result = await executeFunction(SCRAPER_ENGINE_ID, functionPayload, false);
-        console.log("[useTriggerScrape] Execution result:", result);
+        const execution = await functions.createExecution(
+          SCRAPER_ENGINE_ID,
+          functionPayload,
+          false // synchronous
+        );
+        console.log("[useTriggerScrape] Execution result:", execution.$id, execution.status);
       } catch (error) {
-        logAppwriteError("useTriggerScrape - executeFunction", error);
+        logAppwriteError("useTriggerScrape - createExecution", error);
         console.warn("[useTriggerScrape] Function trigger failed, but job was created");
       }
 
