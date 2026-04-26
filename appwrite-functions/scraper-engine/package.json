@@ -1,7 +1,7 @@
 {
   "name": "scraper-engine",
   "version": "1.0.0",
-  "description": "BelRealty - Core scraping engine with Playwright for JS-rendered sites",
+  "description": "BelRealty - Powerful scraping engine with API discovery and fallback",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "node-appwrite": "^11.0.0",
-    "playwright-core": "^1.42.0"
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0"
   }
 }

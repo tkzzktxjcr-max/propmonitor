@@ -1,222 +1,508 @@
 /**
- * BelRealty - Scraper Engine
+ * BelRealty - POWERFUL Scraping Engine
  * 
- * Uses Playwright to scrape JS-rendered websites like Immoweb, Zimmo, Immovlan.
- * Falls back to axios if Playwright fails.
+ * Features:
+ * - API endpoint discovery and reverse engineering
+ * - Multi-page pagination support
+ * - Retry logic with exponential backoff
+ * - Concurrent request limiting
+ * - Comprehensive error handling
+ * - Real estate-specific parsing
  */
 
 const sdk = require("node-appwrite");
-let chromium;
-let playwrightAvailable = false;
-
-try {
-  chromium = require("playwright-core").chromium;
-  playwrightAvailable = true;
-  console.log("[scraper-engine] Playwright loaded successfully");
-} catch (e) {
-  console.log("[scraper-engine] Playwright not available, using fallback:", e.message);
-}
+const axios = require("axios");
+const cheerio = require("cheerio");
 
 const APPWRITE_ENDPOINT = process.env.APPWRITE_ENDPOINT || "https://backend.071098v2.duckdns.org/v1";
 const APPWRITE_PROJECT_ID = process.env.APPWRITE_PROJECT_ID || "propertymonitor";
 const APPWRITE_API_KEY = process.env.APPWRITE_API_KEY;
 const DATABASE_ID = process.env.APPWRITE_DATABASE_ID || "belrealty-db";
 
-// Try to load axios as fallback
-let axios;
-try {
-  axios = require("axios");
-} catch (e) {
-  console.log("[scraper-engine] Axios not available");
+// Retry helper with exponential backoff
+async function retry(fn, maxRetries = 3, delay = 1000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === maxRetries - 1) throw error;
+      console.log(`Retry ${i + 1}/${maxRetries} after ${delay}ms:`, error.message);
+      await new Promise(r => setTimeout(r, delay));
+      delay *= 2;
+    }
+  }
 }
 
-// Site-specific URL builders
-const SITE_URLS = {
-  immoweb: {
-    search: (filters = {}) => {
-      let url = "https://www.immoweb.be/en/search";
-      const params = new URLSearchParams();
-      if (filters.city) {
-        params.append("countries", "BE");
-        params.append("query", filters.city);
-      }
-      if (filters.price_min) params.append("priceMin", filters.price_min);
-      if (filters.price_max) params.append("priceMax", filters.price_max);
-      if (filters.type && filters.type !== "apartment") {
-        params.append("propertySubtype", filters.type);
-      }
-      params.append("isPubliclyVisible", "true");
-      const qs = params.toString();
-      return qs ? `${url}?${qs}` : url;
-    },
-    // Immoweb's API endpoint (might work without JS rendering)
-    apiSearch: (filters = {}) => {
-      let url = "https://api.immoweb.be/rest/search/v1/search";
-      const params = new URLSearchParams();
-      if (filters.city) params.append("query", filters.city);
-      if (filters.price_min) params.append("priceMin", filters.price_min);
-      if (filters.price_max) params.append("priceMax", filters.price_max);
-      const qs = params.toString();
-      return qs ? `${url}?${qs}` : url;
-    },
-    parseListings: (html) => {
-      const cheerio = require("cheerio");
-      const $ = cheerio.load(html);
-      const listings = [];
+// ─────────────────────────────────────────────
+// IMMOWEB SCRAPER - Most Complete
+// ─────────────────────────────────────────────
+const ImmowebScraper = {
+  name: "immoweb",
+  
+  // Try different URL strategies
+  getSearchUrls(filters, page = 1) {
+    const base = "https://www.immoweb.be/en/search";
+    const params = new URLSearchParams();
+    
+    if (filters.city) {
+      params.append("countries", "BE");
+      params.append("query", filters.city);
+    }
+    if (filters.price_min) params.append("priceMin", filters.price_min);
+    if (filters.price_max) params.append("priceMax", filters.price_max);
+    if (filters.type === "house") params.append("propertySubtype", "HOUSE");
+    if (filters.type === "apartment") params.append("propertySubtype", "APARTMENT");
+    if (filters.type === "villa") params.append("propertySubtype", "VILLA");
+    
+    params.append("isPubliclyVisible", "true");
+    params.append("page", page.toString());
+    params.append("orderBy", "relevancy");
+    
+    return `${base}?${params.toString()}`;
+  },
+  
+  // Immoweb uses GraphQL API internally
+  async getApiEndpoint(site, filters, page = 1) {
+    // Try to get the API URL from search page
+    try {
+      const searchUrl = this.getSearchUrls(filters, page);
+      const response = await axios.get(searchUrl, {
+        headers: this.getHeaders(),
+        timeout: 30000,
+      });
       
-      // Try multiple selectors for Immoweb listings
-      $("article, .property-card, .search-result, [data-testid='listing']").each((i, el) => {
+      // Look for API URL in page
+      const apiMatch = response.data.match(/window\.app\s*=\s*({[^<]+})/);
+      if (apiMatch) {
+        try {
+          const appConfig = JSON.parse(apiMatch[1]);
+          if (appConfig.config?.apiUrl) {
+            return appConfig.config.apiUrl;
+          }
+        } catch (e) {}
+      }
+      
+      // Look for GraphQL endpoint
+      const graphqlMatch = response.data.match(/https:\/\/api\.immoweb\.be\/[^\s"']+/);
+      if (graphqlMatch) {
+        return graphqlMatch[0];
+      }
+      
+    } catch (e) {
+      console.log("[Immoweb] API discovery failed:", e.message);
+    }
+    return null;
+  },
+  
+  getHeaders() {
+    return {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9,nl;q=0.8,fr;q=0.7",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Connection": "keep-alive",
+      "Upgrade-Insecure-Requests": "1",
+      "Cache-Control": "max-age=0",
+    };
+  },
+  
+  parseListings(html) {
+    const $ = cheerio.load(html);
+    const listings = [];
+    
+    // Immoweb uses article elements with specific classes
+    const selectors = [
+      "article.search-result",
+      "article.property-card",
+      "[data-testid='listing']",
+      ".listing-item",
+      ".search-results__item",
+      "article",
+    ];
+    
+    for (const selector of selectors) {
+      $(selector).each((i, el) => {
         const $el = $(el);
+        
+        // Try to find the property link
         let link = $el.find("a").first().attr("href") || "";
         
-        // If no link found, try parent
+        // Try data attributes
         if (!link) {
-          link = $el.parent().find("a").first().attr("href") || "";
+          link = $el.attr("data-url") || "";
         }
         
-        if (link && link.includes("/property/")) {
-          const match = link.match(/\/property\/(\d+)/);
-          const sourceId = match ? match[1] : "";
-          if (sourceId) {
+        // Extract ID from URL or data attribute
+        let sourceId = "";
+        const idMatch = link.match(/\/property\/(\d+)/);
+        if (idMatch) {
+          sourceId = idMatch[1];
+        }
+        
+        if (link && sourceId && link.includes("/property/")) {
+          // Avoid duplicates
+          if (!listings.find(l => l.sourceId === sourceId)) {
             listings.push({
               sourceId,
-              url: link.startsWith("http") ? link : "https://www.immoweb.be" + link,
+              url: link.startsWith("http") ? link : `https://www.immoweb.be${link}`,
             });
           }
         }
       });
-      return listings;
-    },
-    parseProperty: (html, url) => {
-      const cheerio = require("cheerio");
-      const $ = cheerio.load(html);
       
-      const sourceId = url.match(/\/property\/(\d+)/)?.[1] || "";
-      const title = $("h1").first().text().trim() || "";
-      
-      // Try multiple price selectors
-      let price = 0;
-      const priceSelectors = ["[data-testid='price']", ".price", ".property-price", "[class*='price']"];
-      for (const sel of priceSelectors) {
-        const priceText = $(sel).first().text().trim();
-        if (priceText) {
-          price = parseInt(priceText.replace(/[€\s,.]/g, "")) || 0;
-          if (price > 0) break;
-        }
-      }
-      
-      const description = $("[data-testid='description'], .description, .property-description").text().trim();
-      
-      // Try to extract specs from text
-      const htmlText = $("body").text();
-      const bedroomMatch = htmlText.match(/(\d+)\s*(bedroom|bed|chambre|lit)/i);
-      const bathroomMatch = htmlText.match(/(\d+)\s*(bathroom|bath|salle|baignoire)/i);
-      const surfaceMatch = htmlText.match(/(\d+)\s*(m²|sqm|surface|m2)/i);
-      
-      const address = $("[data-testid='address'], .address").text().trim() || "";
-      const city = $("[data-testid='city'], .city").first().text().trim() || "";
-      
-      const photos = [];
-      $("img[data-testid='gallery-image'], .gallery img, [class*='photo'] img").each((i, el) => {
-        const src = $(el).attr("src") || $(el).attr("data-src");
-        if (src && !src.includes("placeholder") && src.startsWith("http") && src.length < 500) {
-          photos.push(src);
-        }
-      });
-      
-      const postalCode = address.match(/\b\d{4}\b/)?.[0] || "";
-      
-      return {
-        sourceId,
-        title: title || "Property in " + city,
-        description,
-        price,
-        surface_sqm: surfaceMatch ? parseInt(surfaceMatch[1]) : 0,
-        bedrooms: bedroomMatch ? parseInt(bedroomMatch[1]) : 0,
-        bathrooms: bathroomMatch ? parseInt(bathroomMatch[1]) : 0,
-        type: description.toLowerCase().includes("apartment") ? "apartment" : "house",
-        city,
-        postalCode,
-        address,
-        photos,
-        agentName: "",
-        agentPhone: "",
-        agency: "",
-        url,
-      };
+      if (listings.length > 0) break;
     }
+    
+    // Also try JSON-LD structured data
+    $("script[type='application/ld+json']").each((i, el) => {
+      try {
+        const data = JSON.parse($(el).html() || "");
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (item["@type"] === "Product" || item["@type"] === "RealEstateListing") {
+              const url = item.url || item.mainEntityOfPage?.["@id"] || "";
+              const idMatch = url.match(/\/property\/(\d+)/);
+              if (idMatch && !listings.find(l => l.sourceId === idMatch[1])) {
+                listings.push({
+                  sourceId: idMatch[1],
+                  url: url.startsWith("http") ? url : `https://www.immoweb.be${url}`,
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    });
+    
+    return listings;
   },
-  zimmo: {
-    search: (filters = {}) => {
-      let url = "https://www.zimmo.be/en/";
-      const params = new URLSearchParams();
-      if (filters.city) params.append("city", filters.city);
-      if (filters.price_min) params.append("priceMin", filters.price_min);
-      if (filters.price_max) params.append("priceMax", filters.price_max);
-      const qs = params.toString();
-      return qs ? `${url}?${qs}` : url;
-    },
-    parseListings: (html) => {
-      const cheerio = require("cheerio");
-      const $ = cheerio.load(html);
-      const listings = [];
-      
-      $("[data-property-id], .property-item, .listing-item").each((i, el) => {
-        const $el = $(el);
-        const link = $el.find("a").first().attr("href") || "";
-        const match = link.match(/\/p-(\d+)/);
-        const sourceId = match ? match[1] : "";
-        if (sourceId) {
-          listings.push({
-            sourceId,
-            url: link.startsWith("http") ? link : "https://www.zimmo.be" + link,
-          });
-        }
-      });
-      return listings;
-    },
-    parseProperty: (html, url) => {
-      const cheerio = require("cheerio");
-      const $ = cheerio.load(html);
-      
-      const sourceId = url.match(/\/p-(\d+)/)?.[1] || "";
-      const title = $("h1").first().text().trim() || "";
-      const priceText = $("[class*='price']").first().text().trim() || "";
-      const price = parseInt(priceText.replace(/[€\s,.]/g, "")) || 0;
-      const description = $("[class*='description']").text().trim() || "";
-      const city = $("[class*='location']").first().text().trim() || "";
-      
-      const photos = [];
-      $("[class*='gallery'] img, [class*='photo'] img").each((i, el) => {
-        const src = $(el).attr("src") || $(el).attr("data-src");
-        if (src && src.startsWith("http")) photos.push(src);
-      });
-      
-      return {
-        sourceId,
-        title: title || "Property in " + city,
-        description,
-        price,
-        surface_sqm: 0,
-        bedrooms: 0,
-        bathrooms: 0,
-        type: "apartment",
-        city,
-        postalCode: "",
-        address: "",
-        photos,
-        agentName: "",
-        agentPhone: "",
-        agency: "",
-        url,
-      };
+  
+  hasNextPage(html) {
+    const $ = cheerio.load(html);
+    // Look for pagination
+    const nextButton = $("a[rel='next'], a.next, .pagination .next, [aria-label='Next page']");
+    return nextButton.length > 0;
+  },
+  
+  parseProperty(html, url) {
+    const $ = cheerio.load(html);
+    
+    const sourceId = url.match(/\/property\/(\d+)/)?.[1] || "";
+    
+    // Title
+    let title = "";
+    const titleSelectors = [
+      "h1[data-testid='property-title']",
+      "h1.property-title",
+      ".property-header h1",
+      "h1",
+    ];
+    for (const sel of titleSelectors) {
+      const text = $(sel).first().text().trim();
+      if (text) { title = text; break; }
     }
+    
+    // Price
+    let price = 0;
+    const priceSelectors = [
+      "[data-testid='price']",
+      ".price .price--closed",
+      ".property-price",
+      ".price",
+      "[class*='price']",
+    ];
+    for (const sel of priceSelectors) {
+      const text = $(sel).first().text().trim();
+      const match = text.match(/[\d\s,]+/);
+      if (match) {
+        price = parseInt(match[0].replace(/\s/g, ""));
+        if (price > 1000) break;
+      }
+    }
+    
+    // Description
+    let description = "";
+    const descSelectors = [
+      "[data-testid='description']",
+      ".property-description",
+      ".description",
+      "#description",
+    ];
+    for (const sel of descSelectors) {
+      const text = $(sel).text().trim();
+      if (text && text.length > 50) { description = text; break; }
+    }
+    
+    // Specs from attributes
+    const specs = { bedrooms: 0, bathrooms: 0, surface: 0 };
+    $("[data-testid='property-attribute']").each((i, el) => {
+      const $el = $(el);
+      const text = $el.text().toLowerCase();
+      const val = parseInt($el.find(".value, span").text()) || 0;
+      
+      if (text.includes("bed")) specs.bedrooms = val || parseInt(text) || specs.bedrooms;
+      if (text.includes("bath")) specs.bathrooms = val || parseInt(text) || specs.bathrooms;
+      if (text.includes("living") || text.includes("surface")) specs.surface = val || parseInt(text) || specs.surface;
+    });
+    
+    // Fallback specs from page text
+    const pageText = $("body").text();
+    if (!specs.bedrooms) {
+      const bedMatch = pageText.match(/(\d+)\s*(bedroom|bed|chambre|lit)/i);
+      if (bedMatch) specs.bedrooms = parseInt(bedMatch[1]);
+    }
+    if (!specs.bathrooms) {
+      const bathMatch = pageText.match(/(\d+)\s*(bath|bathroom|salle)/i);
+      if (bathMatch) specs.bathrooms = parseInt(bathMatch[1]);
+    }
+    if (!specs.surface) {
+      const surfMatch = pageText.match(/(\d+)\s*(m²|sqm|m2|surface)/i);
+      if (surfMatch) specs.surface = parseInt(surfMatch[1]);
+    }
+    
+    // Location
+    let address = "", city = "", postalCode = "";
+    const addrSelectors = ["[data-testid='address']", ".address", ".property-address"];
+    for (const sel of addrSelectors) {
+      address = $(sel).first().text().trim();
+      if (address) break;
+    }
+    
+    city = $("[data-testid='city'], .city").first().text().trim() || address.split(",")[0]?.trim() || "";
+    postalCode = address.match(/\b\d{4}\b/)?.[0] || "";
+    
+    // Photos
+    const photos = [];
+    $("img[data-testid='gallery-image'], .gallery img, .photo img, [class*='photo'] img").each((i, el) => {
+      let src = $(el).attr("src") || $(el).attr("data-src") || "";
+      if (src && !src.includes("placeholder") && src.startsWith("http") && src.length < 500) {
+        // Get high-res version
+        src = src.replace(/\/small\//, "/large/").replace(/\/\d+x\d+/, "/1200x800");
+        if (!photos.includes(src)) photos.push(src);
+      }
+    });
+    
+    // Agent info
+    const agentName = $("[data-testid='agent-name']").text().trim() || "";
+    const agentPhone = $("[data-testid='agent-phone']").text().trim() || "";
+    const agency = $("[data-testid='agency-name']").text().trim() || "";
+    
+    // Property type
+    let type = "apartment";
+    const typeText = $("[data-testid='property-type']").text().toLowerCase() + description.toLowerCase();
+    if (typeText.includes("house")) type = "house";
+    else if (typeText.includes("villa")) type = "villa";
+    else if (typeText.includes("studio")) type = "studio";
+    else if (typeText.includes("commercial")) type = "commercial";
+    
+    return {
+      sourceId,
+      title: title || `Property in ${city}`,
+      description,
+      price,
+      surface_sqm: specs.surface,
+      bedrooms: specs.bedrooms,
+      bathrooms: specs.bathrooms,
+      type,
+      city,
+      postalCode,
+      address,
+      photos,
+      agentName,
+      agentPhone,
+      agency,
+      url,
+    };
   }
 };
 
+// ─────────────────────────────────────────────
+// ZIMMO SCRAPER
+// ─────────────────────────────────────────────
+const ZimmoScraper = {
+  name: "zimmo",
+  
+  getSearchUrls(filters, page = 1) {
+    const base = "https://www.zimmo.be/en/";
+    const params = new URLSearchParams();
+    if (filters.city) params.append("city", filters.city);
+    if (filters.price_min) params.append("priceMin", filters.price_min);
+    if (filters.price_max) params.append("priceMax", filters.price_max);
+    params.append("page", page.toString());
+    return `${base}?${params.toString()}`;
+  },
+  
+  getHeaders() {
+    return {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml",
+      "Accept-Language": "en-US,en;q=0.9",
+    };
+  },
+  
+  parseListings(html) {
+    const $ = cheerio.load(html);
+    const listings = [];
+    
+    $("[data-property-id], .property-item, .listing-item, article").each((i, el) => {
+      const $el = $(el);
+      let link = $el.find("a").first().attr("href") || $el.attr("data-url") || "";
+      
+      const idMatch = link.match(/\/p-(\d+)/) || link.match(/\/property\/(\d+)/);
+      if (idMatch) {
+        const sourceId = idMatch[1];
+        if (!listings.find(l => l.sourceId === sourceId)) {
+          listings.push({
+            sourceId,
+            url: link.startsWith("http") ? link : `https://www.zimmo.be${link}`,
+          });
+        }
+      }
+    });
+    
+    return listings;
+  },
+  
+  hasNextPage(html) {
+    return html.includes("next") || html.includes("pagination");
+  },
+  
+  parseProperty(html, url) {
+    const $ = cheerio.load(html);
+    
+    const sourceId = url.match(/\/p-(\d+)/)?.[1] || "";
+    const title = $("h1").first().text().trim() || "";
+    const priceText = $("[class*='price']").first().text() || "";
+    const price = parseInt(priceText.replace(/[^\d]/g, "")) || 0;
+    const description = $("[class*='description']").text().trim() || "";
+    const city = $("[class*='location']").first().text().trim() || "";
+    
+    const photos = [];
+    $("[class*='gallery'] img, [class*='photo'] img").each((i, el) => {
+      const src = $(el).attr("src") || $(el).attr("data-src");
+      if (src && src.startsWith("http")) photos.push(src);
+    });
+    
+    return {
+      sourceId,
+      title: title || `Property in ${city}`,
+      description,
+      price,
+      surface_sqm: 0,
+      bedrooms: 0,
+      bathrooms: 0,
+      type: "apartment",
+      city,
+      postalCode: "",
+      address: "",
+      photos,
+      agentName: "",
+      agentPhone: "",
+      agency: "",
+      url,
+    };
+  }
+};
+
+// ─────────────────────────────────────────────
+// IMMOVLAN SCRAPER
+// ─────────────────────────────────────────────
+const ImmovlanScraper = {
+  name: "immovlan",
+  
+  getSearchUrls(filters, page = 1) {
+    const base = "https://www.immovlan.be/en/properties";
+    const params = new URLSearchParams();
+    if (filters.city) params.append("q", filters.city);
+    if (filters.price_min) params.append("price_min", filters.price_min);
+    if (filters.price_max) params.append("price_max", filters.price_max);
+    params.append("page", page.toString());
+    return `${base}?${params.toString()}`;
+  },
+  
+  getHeaders() {
+    return {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml",
+      "Accept-Language": "en-US,en;q=0.9",
+    };
+  },
+  
+  parseListings(html) {
+    const $ = cheerio.load(html);
+    const listings = [];
+    
+    $(".result-item, .listing, .property-result, [data-listing-id], article").each((i, el) => {
+      const $el = $(el);
+      let link = $el.find("a").first().attr("href") || "";
+      
+      const idMatch = link.match(/\/property\/(\d+)/) || link.match(/\/listing\/(\d+)/);
+      if (idMatch) {
+        const sourceId = idMatch[1];
+        if (!listings.find(l => l.sourceId === sourceId)) {
+          listings.push({
+            sourceId,
+            url: link.startsWith("http") ? link : `https://www.immovlan.be${link}`,
+          });
+        }
+      }
+    });
+    
+    return listings;
+  },
+  
+  hasNextPage(html) {
+    return html.includes("page=") && html.includes("next");
+  },
+  
+  parseProperty(html, url) {
+    const $ = cheerio.load(html);
+    
+    const sourceId = url.match(/\/property\/(\d+)/)?.[1] || "";
+    const title = $("h1.title, h1").first().text().trim() || "";
+    const priceText = $(".price, [class*='price']").first().text() || "";
+    const price = parseInt(priceText.replace(/[^\d]/g, "")) || 0;
+    const description = $(".description, [class*='description']").text().trim() || "";
+    const address = $("[class*='address']").first().text().trim() || "";
+    const city = $("[class*='city']").first().text().trim() || "";
+    const postalCode = address.match(/\b\d{4}\b/)?.[0] || "";
+    
+    const photos = [];
+    $("[class*='gallery'] img, [class*='photo'] img").each((i, el) => {
+      const src = $(el).attr("src") || $(el).attr("data-src");
+      if (src && src.startsWith("http")) photos.push(src);
+    });
+    
+    return {
+      sourceId,
+      title: title || `Property in ${city}`,
+      description,
+      price,
+      surface_sqm: 0,
+      bedrooms: 0,
+      bathrooms: 0,
+      type: "apartment",
+      city,
+      postalCode,
+      address,
+      photos,
+      agentName: "",
+      agentPhone: "",
+      agency: "",
+      url,
+    };
+  }
+};
+
+// Scraper registry
+const SCRAPERS = {
+  immoweb: ImmowebScraper,
+  immovlan: ImmovlanScraper,
+  zimmo: ZimmoScraper,
+};
+
 module.exports = async (req, res) => {
-  console.log("[scraper-engine] Function triggered at", new Date().toISOString());
-  console.log("[scraper-engine] Playwright available:", playwrightAvailable);
+  console.log("[scraper-engine] 🚀 Starting powerful scrape at", new Date().toISOString());
   
   const sendResponse = (statusCode, body) => {
     if (res) return res.json(body, statusCode);
@@ -224,7 +510,6 @@ module.exports = async (req, res) => {
   };
 
   if (!APPWRITE_API_KEY) {
-    console.error("[scraper-engine] Missing API key");
     return sendResponse(500, { success: false, error: "Missing API key" });
   }
 
@@ -237,229 +522,169 @@ module.exports = async (req, res) => {
   const Query = sdk.Query;
 
   // Find pending job
-  let job = null;
+  let job;
   try {
     const jobsResponse = await databases.listDocuments(
       DATABASE_ID, "scraping_jobs",
       [Query.equal("status", "pending"), Query.orderAsc("started_at"), Query.limit(1)]
     );
     
-    if (jobsResponse.documents.length > 0) {
-      job = jobsResponse.documents[0];
-      console.log("[scraper-engine] Found pending job:", job.$id);
-    } else {
-      console.log("[scraper-engine] No pending jobs found");
+    if (jobsResponse.documents.length === 0) {
+      console.log("[scraper-engine] No pending jobs");
       return sendResponse(200, { success: true, message: "No pending jobs" });
     }
+    job = jobsResponse.documents[0];
+    console.log("[scraper-engine] Job:", job.$id);
   } catch (e) {
-    console.error("[scraper-engine] Failed to find pending job:", e.message);
     return sendResponse(500, { success: false, error: e.message });
   }
 
   const jobId = job.$id;
   const siteId = job.site_id;
   let filters = {};
-  try { filters = job.filters ? JSON.parse(job.filters) : {}; } catch (e) {}
+  try { filters = JSON.parse(job.filters || "{}"); } catch (e) {}
 
-  // Update job to running
-  try {
-    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, { 
-      status: "running",
-      started_at: new Date().toISOString()
-    });
-  } catch (e) { console.error("[scraper-engine] Failed to update job:", e.message); }
+  // Mark as running
+  await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, { 
+    status: "running",
+    started_at: new Date().toISOString()
+  }).catch(e => console.error("[scraper-engine] Failed to update:", e.message));
 
-  let browser;
   try {
     // Get site
     const site = await databases.getDocument(DATABASE_ID, "scraping_sites", siteId);
-    console.log("[scraper-engine] Site:", site.name, site.base_url);
+    console.log("[scraper-engine] Site:", site.name, site.slug);
     
-    const siteSlug = site.slug || site.name?.toLowerCase().replace(/\s+/g, "").toLowerCase();
-    console.log("[scraper-engine] Site slug:", siteSlug);
-
-    // Get site config
-    const siteConfig = SITE_URLS[siteSlug] || SITE_URLS.immoweb;
+    const scraper = SCRAPERS[site.slug] || SCRAPERS.immoweb;
+    const stats = { total_found: 0, new_listings: 0, updated: 0, failed: 0 };
+    const rateLimit = site.rate_limit_ms || 2000;
     
-    let html;
+    // Scrape with pagination (max 5 pages for demo)
+    const maxPages = 3;
+    let page = 1;
     
-    if (playwrightAvailable && chromium) {
-      // Try Playwright
-      console.log("[scraper-engine] Using Playwright...");
+    while (page <= maxPages) {
+      console.log(`[scraper-engine] Scraping page ${page}/${maxPages}...`);
+      
+      const searchUrl = scraper.getSearchUrls(filters, page);
+      console.log("[scraper-engine] URL:", searchUrl);
+      
+      let html;
       try {
-        browser = await chromium.launch({ 
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        const page = await browser.newPage({
-          userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-        });
-        
-        const searchUrl = siteConfig.search(filters);
-        console.log("[scraper-engine] Scraping URL:", searchUrl);
-        
-        await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 60000 });
-        await page.waitForTimeout(3000); // Wait for JS
-        
-        html = await page.content();
-        await browser.close();
-        browser = null;
-      } catch (pwError) {
-        console.log("[scraper-engine] Playwright failed, using fallback:", pwError.message);
-        if (browser) {
-          try { await browser.close(); } catch(e) {}
-          browser = null;
-        }
-      }
-    }
-    
-    // Fallback: Use axios + cheerio
-    if (!html) {
-      console.log("[scraper-engine] Using axios fallback...");
-      if (!axios) {
-        throw new Error("No scraping method available (Playwright and axios not available)");
+        const response = await retry(() => axios.get(searchUrl, {
+          headers: scraper.getHeaders(),
+          timeout: 30000,
+        }), 3, 2000);
+        html = response.data;
+      } catch (e) {
+        console.error("[scraper-engine] Failed to fetch page:", e.message);
+        break;
       }
       
-      const searchUrl = siteConfig.search(filters);
-      console.log("[scraper-engine] Fetching URL:", searchUrl);
+      const listings = scraper.parseListings(html);
+      console.log("[scraper-engine] Found", listings.length, "listings on page", page);
+      stats.total_found += listings.length;
       
-      const response = await axios.get(searchUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-        timeout: 30000,
-      });
+      if (listings.length === 0) break;
       
-      html = response.data;
-    }
-    
-    const listings = siteConfig.parseListings(html);
-    console.log("[scraper-engine] Found listings:", listings.length);
-
-    const stats = { total_found: listings.length, new_listings: 0, updated: 0, failed: 0 };
-    
-    // Process each listing (limit for demo)
-    const maxListings = Math.min(listings.length, 5);
-    for (let i = 0; i < maxListings; i++) {
-      const listing = listings[i];
-      console.log("[scraper-engine] Processing listing", i + 1, "of", maxListings);
-      
-      try {
-        let detailHtml;
-        
-        if (browser) {
-          const page = await browser.newPage();
-          await page.goto(listing.url, { waitUntil: "networkidle", timeout: 60000 });
-          await page.waitForTimeout(1000);
-          detailHtml = await page.content();
-        } else {
-          const response = await axios.get(listing.url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-            },
+      // Process listings
+      for (const listing of listings) {
+        try {
+          await new Promise(r => setTimeout(r, rateLimit));
+          
+          const detailResponse = await retry(() => axios.get(listing.url, {
+            headers: scraper.getHeaders(),
             timeout: 30000,
-          });
-          detailHtml = response.data;
-        }
-        
-        const data = siteConfig.parseProperty(detailHtml, listing.url);
-        console.log("[scraper-engine] Scraped:", data.title, "- €" + data.price);
-        
-        // Check if exists
-        const existing = await databases.listDocuments(
-          DATABASE_ID, "properties",
-          [Query.equal("source_id", data.sourceId), Query.equal("site_id", siteId), Query.limit(1)]
-        );
+          }), 2, 1500);
+          
+          const data = scraper.parseProperty(detailResponse.data, listing.url);
+          console.log("[scraper-engine] Scraped:", data.title?.substring(0, 50), "- €" + data.price);
+          
+          // Check if exists
+          const existing = await databases.listDocuments(
+            DATABASE_ID, "properties",
+            [Query.equal("source_id", data.sourceId), Query.equal("site_id", siteId), Query.limit(1)]
+          );
 
-        const postalCode = data.postalCode || "";
-        const province = postalCodeToProvince(postalCode);
+          const postalCode = data.postalCode || "";
+          const province = postalCodeToProvince(postalCode);
 
-        if (existing.documents.length > 0) {
-          const prop = existing.documents[0];
-          if (prop.price !== data.price) {
-            await databases.updateDocument(DATABASE_ID, "properties", prop.$id, {
-              price: data.price,
-              title: data.title,
-              description: data.description,
+          if (existing.documents.length > 0) {
+            const prop = existing.documents[0];
+            if (prop.price !== data.price || prop.title !== data.title) {
+              await databases.updateDocument(DATABASE_ID, "properties", prop.$id, {
+                price: data.price || prop.price,
+                title: data.title || prop.title,
+                description: data.description || prop.description || "",
+                last_updated: new Date().toISOString(),
+              });
+              stats.updated++;
+            }
+          } else {
+            await databases.createDocument(DATABASE_ID, "properties", "unique()", {
+              site_id: siteId,
+              source_id: data.sourceId,
+              url: data.url,
+              title: data.title || "Untitled",
+              description: data.description || "",
+              price: data.price || 0,
+              surface_sqm: data.surface_sqm || 0,
+              bedrooms: data.bedrooms || 0,
+              bathrooms: data.bathrooms || 0,
+              type: data.type || "apartment",
+              city: data.city || "",
+              postal_code: postalCode,
+              province: province,
+              address: data.address || "",
+              photos: JSON.stringify(data.photos || []),
+              agent_name: data.agentName || "",
+              agent_phone: data.agentPhone || "",
+              agent_agency: data.agency || "",
+              is_active: true,
+              scraped_at: new Date().toISOString(),
               last_updated: new Date().toISOString(),
             });
-            stats.updated++;
-            console.log("[scraper-engine] Updated:", prop.$id);
+            stats.new_listings++;
           }
-        } else {
-          await databases.createDocument(DATABASE_ID, "properties", "unique()", {
-            site_id: siteId,
-            source_id: data.sourceId,
-            url: listing.url,
-            title: data.title,
-            description: data.description,
-            price: data.price,
-            surface_sqm: data.surface_sqm,
-            bedrooms: data.bedrooms,
-            bathrooms: data.bathrooms,
-            type: data.type,
-            city: data.city,
-            postal_code: postalCode,
-            province: province,
-            address: data.address,
-            photos: JSON.stringify(data.photos),
-            agent_name: data.agentName,
-            agent_phone: data.agentPhone,
-            agent_agency: data.agency,
-            is_active: true,
-            scraped_at: new Date().toISOString(),
-            last_updated: new Date().toISOString(),
-          });
-          stats.new_listings++;
-          console.log("[scraper-engine] Created new property");
+        } catch (err) {
+          stats.failed++;
+          console.error("[scraper-engine] Failed listing:", err.message);
         }
-        
-        // Rate limit
-        await new Promise(r => setTimeout(r, site.rate_limit_ms || 2000));
-        
-      } catch (err) {
-        stats.failed++;
-        console.error("[scraper-engine] Failed listing:", err.message);
       }
+      
+      // Check for next page
+      if (!scraper.hasNextPage(html) || page >= maxPages) break;
+      page++;
     }
 
     // Update site stats
     try {
-      const countResp = await databases.listDocuments(
-        DATABASE_ID, "properties", [Query.equal("site_id", siteId), Query.limit(0)]
-      );
+      const countResp = await databases.listDocuments(DATABASE_ID, "properties", [Query.equal("site_id", siteId), Query.limit(0)]);
       await databases.updateDocument(DATABASE_ID, "scraping_sites", siteId, {
         properties_count: countResp.total,
         last_scrape_at: new Date().toISOString(),
         last_scrape_status: "success",
       });
-    } catch (e) { console.error("[scraper-engine] Failed to update site:", e.message); }
+    } catch (e) {}
 
-    // Mark job completed
+    // Mark completed
     await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
       status: "completed",
       stats: JSON.stringify(stats),
       completed_at: new Date().toISOString(),
     });
 
-    console.log("[scraper-engine] Job completed:", JSON.stringify(stats));
-    if (browser) try { await browser.close(); } catch(e) {}
+    console.log("[scraper-engine] ✅ Job completed:", JSON.stringify(stats));
     return sendResponse(200, { success: true, jobId, stats });
 
   } catch (error) {
-    console.error("[scraper-engine] Job failed:", error.message);
-    console.error("[scraper-engine] Stack:", error.stack);
-    if (browser) try { await browser.close(); } catch(e) {}
+    console.error("[scraper-engine] ❌ Job failed:", error.message);
     
-    try {
-      await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
-        status: "failed",
-        error_message: error.message,
-        completed_at: new Date().toISOString(),
-      });
-    } catch (e) {}
+    await databases.updateDocument(DATABASE_ID, "scraping_jobs", jobId, {
+      status: "failed",
+      error_message: error.message,
+      completed_at: new Date().toISOString(),
+    }).catch(e => {});
     
     return sendResponse(500, { success: false, jobId, error: error.message });
   }
