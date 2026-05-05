@@ -16,7 +16,6 @@
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.1",
     "node-cron": "^3.0.3",
-    "puppeteer": "^23.3.0",
     "puppeteer-core": "^23.3.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

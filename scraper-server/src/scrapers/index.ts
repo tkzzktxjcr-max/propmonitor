@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import { retryWithBackoff, randomDelay } from "../utils/retry.js";
 import { validatePropertyData } from "../utils/validation.js";
 import type { ScraperFilters } from "./base.js";
+import type { Page } from "puppeteer-core";
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -42,7 +43,7 @@ export async function runScraper(params: ScrapeParams): Promise<void> {
   const { jobId, source, filters } = params;
   const jobLogger = createJobLogger(jobId);
 
-  let page: import("puppeteer").Page | null = null;
+  let page: Page | null = null;
 
   try {
     jobLogger.info(`Starting scrape for ${source}`, filters);
@@ -116,13 +117,13 @@ export async function runScraper(params: ScrapeParams): Promise<void> {
         let propertyData: PropertyData;
         switch (source) {
           case "immoweb":
-            propertyData = immowebToPropertyData(listing as any, site.$id);
+            propertyData = immowebToPropertyData(listing as unknown as import("./immoweb.js").ImmowebListing, site.$id);
             break;
           case "immovlan":
-            propertyData = immovlanToPropertyData(listing as any, site.$id);
+            propertyData = immovlanToPropertyData(listing as unknown as import("./immovlan.js").ImmovlanListing, site.$id);
             break;
           case "zimmo":
-            propertyData = zimmoToPropertyData(listing as any, site.$id);
+            propertyData = zimmoToPropertyData(listing as unknown as import("./zimmo.js").ZimmoListing, site.$id);
             break;
           default:
             continue;

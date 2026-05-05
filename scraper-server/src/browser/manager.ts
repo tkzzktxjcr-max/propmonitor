@@ -1,6 +1,6 @@
 import puppeteer from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import { Browser, Page, BrowserContext } from "puppeteer";
+import { Browser, Page, BrowserContext } from "puppeteer-core";
 import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
 

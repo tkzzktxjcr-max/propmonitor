@@ -1,4 +1,4 @@
-import { Page } from "puppeteer";
+import { Page } from "puppeteer-core";
 import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { randomDelay, sleep } from "../utils/retry.js";
