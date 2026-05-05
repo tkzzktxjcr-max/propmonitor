@@ -16,6 +16,7 @@ export const COLLECTION_SITES = "scraping_sites";
 export const COLLECTION_JOBS = "scraping_jobs";
 export const COLLECTION_LOGS = "scraping_logs";
 export const COLLECTION_USERS = "users";
+export const COLLECTION_SCHEDULES = "schedules";
 
 // ─────────────────────────────────────────────
 // INITIALIZE CLIENT

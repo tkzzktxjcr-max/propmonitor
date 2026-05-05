@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useRealtimeJobs, useRealtimeProperties, useRealtimeLogs } from "@/hooks/useRealtime";
 import Index from "./pages/Index";
 import PropertyDetail from "./pages/PropertyDetail";
 import Analytics from "./pages/Analytics";
@@ -40,6 +41,29 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Admin Route wrapper - requires admin role
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isAdmin, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 // Public Route wrapper (redirects to home if already logged in)
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -59,6 +83,14 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Realtime subscriptions component (mounts once in the app tree)
+function RealtimeSubscriptions() {
+  useRealtimeJobs();
+  useRealtimeProperties();
+  useRealtimeLogs();
+  return null;
+}
+
 const AppRoutes = () => (
   <Routes>
     {/* Public routes */}
@@ -69,8 +101,10 @@ const AppRoutes = () => (
     <Route path="/properties" element={<ProtectedRoute><Index /></ProtectedRoute>} />
     <Route path="/properties/:id" element={<ProtectedRoute><PropertyDetail /></ProtectedRoute>} />
     <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
-    <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-    <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+    
+    {/* Admin-only routes */}
+    <Route path="/admin" element={<AdminRoute><Admin /></AdminRoute>} />
+    <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
     
     {/* 404 */}
     <Route path="*" element={<NotFound />} />
@@ -83,6 +117,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <RealtimeSubscriptions />
         <AppRoutes />
       </BrowserRouter>
     </TooltipProvider>

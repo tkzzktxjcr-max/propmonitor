@@ -1,9 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { account, ID } from "@/lib/appwrite";
+import { useQueryClient } from "@tanstack/react-query";
+import { account, databases, DATABASE_ID, COLLECTION_USERS, ID } from "@/lib/appwrite";
 import type { User, UserRole } from "@/types";
 
-// Default user for demo/fallback
 const defaultUser: User = {
   $id: "default",
   name: "Admin User",
@@ -16,12 +15,60 @@ const defaultUser: User = {
   created_at: new Date().toISOString()
 };
 
+async function fetchOrCreateUserProfile(accountUser: { $id: string; name: string; email: string }): Promise<User> {
+  try {
+    const doc = await databases.getDocument(DATABASE_ID, COLLECTION_USERS, accountUser.$id);
+    return {
+      $id: doc.$id,
+      name: doc.name || accountUser.name,
+      email: doc.email || accountUser.email,
+      role: (doc.role as UserRole) || "viewer",
+      preferences: typeof doc.preferences === "string"
+        ? JSON.parse(doc.preferences)
+        : doc.preferences || { default_map_view: false, favorite_sources: ["immoweb", "immovlan", "zimmo"] },
+      created_at: doc.created_at || new Date().toISOString(),
+    };
+  } catch {
+    // Document doesn't exist yet — create it with viewer role
+    try {
+      await databases.createDocument(
+        DATABASE_ID,
+        COLLECTION_USERS,
+        accountUser.$id,
+        {
+          name: accountUser.name,
+          email: accountUser.email,
+          role: "viewer",
+          preferences: JSON.stringify({
+            default_map_view: false,
+            favorite_sources: ["immoweb", "immovlan", "zimmo"],
+          }),
+          created_at: new Date().toISOString(),
+        }
+      );
+    } catch (createError) {
+      console.warn("[useAuth] Could not create user profile document:", createError);
+    }
+
+    return {
+      $id: accountUser.$id,
+      name: accountUser.name,
+      email: accountUser.email,
+      role: "viewer",
+      preferences: {
+        default_map_view: false,
+        favorite_sources: ["immoweb", "immovlan", "zimmo"],
+      },
+      created_at: new Date().toISOString(),
+    };
+  }
+}
+
 export function useAuth() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Check if user is logged in on mount
   useEffect(() => {
     checkAuth();
   }, []);
@@ -29,20 +76,10 @@ export function useAuth() {
   const checkAuth = async () => {
     try {
       const appwriteUser = await account.get();
-      setUser({
-        $id: appwriteUser.$id,
-        name: appwriteUser.name,
-        email: appwriteUser.email,
-        role: "admin", // Default role, could be fetched from user attributes
-        preferences: {
-          default_map_view: false,
-          favorite_sources: ["immoweb", "immovlan", "zimmo"]
-        },
-        created_at: appwriteUser.$createdAt
-      });
+      const profile = await fetchOrCreateUserProfile(appwriteUser);
+      setUser(profile);
       setIsAuthenticated(true);
-    } catch (error) {
-      // Not logged in
+    } catch {
       setUser(null);
       setIsAuthenticated(false);
     } finally {
@@ -63,7 +100,7 @@ export function useAuth() {
 
   const register = useCallback(async (email: string, password: string, name: string) => {
     try {
-      await account.create(ID.unique(), email, password, name);
+      const accountUser = await account.create(ID.unique(), email, password, name);
       await account.createEmailPasswordSession(email, password);
       await checkAuth();
       return user;
@@ -102,47 +139,44 @@ export function useLogin() {
   const queryClient = useQueryClient();
   const { checkAuth } = useAuth();
 
-  return useMutation({
-    mutationFn: async ({ email, password }: { email: string; password: string }) => {
+  return {
+    mutateAsync: async ({ email, password }: { email: string; password: string }) => {
       await account.createEmailPasswordSession(email, password);
       await checkAuth();
+      queryClient.invalidateQueries({ queryKey: ["user"] });
       return true;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["user"] });
-    },
-  });
+    isPending: false,
+  };
 }
 
 export function useRegister() {
   const queryClient = useQueryClient();
   const { checkAuth } = useAuth();
 
-  return useMutation({
-    mutationFn: async ({ email, password, name }: { email: string; password: string; name: string }) => {
-      await account.create(ID.unique(), email, password, name);
+  return {
+    mutateAsync: async ({ email, password, name }: { email: string; password: string; name: string }) => {
+      const accountUser = await account.create(ID.unique(), email, password, name);
       await account.createEmailPasswordSession(email, password);
       await checkAuth();
+      queryClient.invalidateQueries({ queryKey: ["user"] });
       return true;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["user"] });
-    },
-  });
+    isPending: false,
+  };
 }
 
 export function useLogout() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: async () => {
+  return {
+    mutateAsync: async () => {
       await account.deleteSession("current");
+      queryClient.clear();
       return true;
     },
-    onSuccess: () => {
-      queryClient.clear();
-    },
-  });
+    isPending: false,
+  };
 }
 
 export function useRequireAuth() {

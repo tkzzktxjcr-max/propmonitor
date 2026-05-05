@@ -2,14 +2,12 @@ import { useState, useEffect } from "react";
 import { 
   Calendar, 
   Play, 
-  Pause, 
   Trash2, 
   Plus, 
   Clock,
   RefreshCw,
   ChevronDown,
   Check,
-  X
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,7 +46,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { useRealtimeSchedules } from "@/hooks/useRealtime";
 
 const SCRAPER_API_URL = import.meta.env.VITE_SCRAPER_API_URL || "http://localhost:3001";
 
@@ -93,6 +91,9 @@ export function ScheduleManager() {
   const [formFilters, setFormFilters] = useState("");
   const [useCustomCron, setUseCustomCron] = useState(false);
 
+  // Enable Realtime subscriptions for schedules
+  useRealtimeSchedules();
+
   const fetchSchedules = async () => {
     setIsLoading(true);
     try {
@@ -129,7 +130,7 @@ export function ScheduleManager() {
       const body: Record<string, unknown> = {
         name: formName,
         site_slug: formSite,
-        cron_expression: useCustomCron ? formCron : formCron,
+        cron_expression: formCron,
         created_by: "admin",
       };
       
@@ -166,7 +167,7 @@ export function ScheduleManager() {
       const body: Record<string, unknown> = {
         name: formName,
         site_slug: formSite,
-        cron_expression: useCustomCron ? formCron : formCron,
+        cron_expression: formCron,
       };
       
       if (formFilters.trim()) {

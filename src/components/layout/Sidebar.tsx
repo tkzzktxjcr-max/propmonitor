@@ -7,14 +7,13 @@ import {
   Shield,
   Layers,
   MapPin,
-  ChevronLeft,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useScrapingJobs } from "@/hooks/useScrapingJobs";
+import { useAuth } from "@/hooks/useAuth";
 
 interface SidebarProps {
   onNavigate?: () => void;
@@ -34,6 +33,7 @@ const adminNavigation = [
 export function Sidebar({ onNavigate }: SidebarProps) {
   const location = useLocation();
   const { data: jobs } = useScrapingJobs();
+  const { isAdmin } = useAuth();
   
   const runningJobs = jobs?.filter((j) => j.status === "running") || [];
   const pendingJobs = jobs?.filter((j) => j.status === "pending") || [];
@@ -117,37 +117,40 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           </div>
         )}
 
-        <Separator className="my-4" />
-
-        {/* Admin Navigation */}
-        <div>
-          <h3 className="px-3 mb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Admin
-          </h3>
-          <nav className="space-y-1">
-            {adminNavigation.map((item) => {
-              const isActive = location.pathname === item.href;
-              const Icon = item.icon;
-              
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  onClick={onNavigate}
-                  className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
-                    isActive
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                  )}
-                >
-                  <Icon className={cn("h-5 w-5", isActive && "text-blue-600")} />
-                  {item.name}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
+        {/* Admin Navigation - only shown for admin users */}
+        {isAdmin && (
+          <>
+            <Separator className="my-4" />
+            <div>
+              <h3 className="px-3 mb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                Admin
+              </h3>
+              <nav className="space-y-1">
+                {adminNavigation.map((item) => {
+                  const isActive = location.pathname === item.href;
+                  const Icon = item.icon;
+                  
+                  return (
+                    <Link
+                      key={item.name}
+                      to={item.href}
+                      onClick={onNavigate}
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all",
+                        isActive
+                          ? "bg-blue-50 text-blue-700"
+                          : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                      )}
+                    >
+                      <Icon className={cn("h-5 w-5", isActive && "text-blue-600")} />
+                      {item.name}
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
+          </>
+        )}
       </ScrollArea>
 
       {/* Footer */}
