@@ -1,70 +1,83 @@
 # ─────────────────────────────────────────────
-# SCRAPER SERVER DOCKERFILE
-# Uses Debian for better Chromium compatibility
+# STAGE 1: Build
 # ─────────────────────────────────────────────
-
-# Build stage
-FROM node:20-bookworm AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Copy source files
-COPY package*.json tsconfig.json ./
-COPY src ./src
+# Copy package files first for better layer caching
+COPY package.json package-lock.json* ./
 
-# Install dependencies (include dev for TypeScript types)
+# Install all dependencies (including devDependencies for build)
 RUN npm install
+
+# Copy source code
+COPY tsconfig.json ./
+COPY src/ ./src/
 
 # Build TypeScript
 RUN npm run build
 
-# Production stage
-FROM node:20-bookworm-slim AS production
+# Remove devDependencies after build
+RUN npm prune --production
 
-# Install Chromium and dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    chromium-sandbox \
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    ca-certificates \
-    fonts-liberation \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
+# ─────────────────────────────────────────────
+# STAGE 2: Production
+# ─────────────────────────────────────────────
+FROM node:20-slim
 
-# Set environment variables for Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu"
+LABEL coolify.managed=true
 
 WORKDIR /app
 
-# Copy built application
-COPY --from=builder /app/package*.json ./
+# Install Chromium and required dependencies for Puppeteer
+RUN apt-get update && apt-get install -y \
+    chromium \
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    libappindicator3-1 \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    xdg-utils \
+    wget \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# Tell Puppeteer to use installed Chromium
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Copy production dependencies from builder
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy built application from builder
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package.json ./
 
-# Install production dependencies only
-RUN npm install --omit=dev && npm cache clean --force
+# Create non-root user for security
+RUN groupadd -r scraper && useradd -r -g scraper -G audio,video scraper \
+    && mkdir -p /home/scraper/Downloads \
+    && chown -R scraper:scraper /app /home/scraper
 
-# Create non-root user
-RUN useradd -m -u 1001 nodejs && chown -R nodejs:nodejs /app
-USER nodejs
+USER scraper
 
 # Expose port
 EXPOSE 3001
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 
 # Start the server
