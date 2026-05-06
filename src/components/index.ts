@@ -27,3 +27,4 @@ export { ScrapeTrigger } from "./admin/ScrapeTrigger";
 export { SiteManager } from "./admin/SiteManager";
 export { ScrapingLogs, JobLogList } from "./admin/ScrapingLogs";
 export { ScheduleManager } from "./admin/ScheduleManager";
+export { ScraperDiagnostics } from "./admin/ScraperDiagnostics";

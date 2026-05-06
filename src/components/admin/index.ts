@@ -6,3 +6,4 @@ export { ScrapeTrigger } from "./ScrapeTrigger";
 export { SiteManager } from "./SiteManager";
 export { ScrapingLogs, JobLogList } from "./ScrapingLogs";
 export { ScheduleManager } from "./ScheduleManager";
+export { ScraperDiagnostics } from "./ScraperDiagnostics";
