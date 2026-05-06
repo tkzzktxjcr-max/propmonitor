@@ -1,6 +1,4 @@
-import { Page } from "puppeteer-core";
-import { InterceptedResponse, interceptResponses } from "../browser/manager.js";
-import { RawListing } from "../utils/validation.js";
+import { Page } from "playwright";
 import { PropertyData } from "../appwrite/client.js";
 
 export interface ScraperFilters {
@@ -31,7 +29,7 @@ export interface SearchResultItem {
 }
 
 export interface ScrapeResult {
-  listings: RawListing[];
+  listings: SearchResultItem[];
   totalFound: number;
 }
 
@@ -46,61 +44,29 @@ export abstract class BaseScraper {
     this.logger = logger;
   }
 
-  abstract getApiPattern(): string | RegExp;
-  abstract parseSearchResults(responses: InterceptedResponse[]): SearchResultItem[];
-  abstract extractDetailData(responses: InterceptedResponse[], url: string): Promise<Partial<PropertyData>>;
   abstract buildSearchUrl(filters?: ScraperFilters): string;
-  abstract extractFromDom(page: Page): Promise<SearchResultItem[]>;
+  abstract extractListingsFromDom(page: Page): Promise<SearchResultItem[]>;
+  abstract extractDetailFromDom(page: Page): Promise<Partial<PropertyData>>;
 
   async scrapeSearchPage(page: Page, searchUrl: string): Promise<ScrapeResult> {
-    this.logger.info(`Navigating to search: ${searchUrl}`);
+    this.logger.info(`Navigating to: ${searchUrl}`);
     
-    const apiResponses = await interceptResponses(page, this.getApiPattern());
-    await page.goto(searchUrl, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 60000 });
+    await page.waitForTimeout(3000);
     
-    await new Promise(r => setTimeout(r, 3000));
-    
-    // Log all intercepted URLs for debugging
-    const interceptedUrls = apiResponses.map(r => r.url);
-    this.logger.info(`Intercepted ${apiResponses.length} API responses`, { urls: interceptedUrls.slice(0, 5) });
-    
-    let results = this.parseSearchResults(apiResponses);
-    this.logger.info(`Parsed ${results.length} listings from API responses`);
-    
-    // Fallback: if no API results, extract from DOM
-    if (results.length === 0) {
-      this.logger.info(`No API results found, falling back to DOM extraction...`);
-      results = await this.extractFromDom(page);
-      this.logger.info(`Extracted ${results.length} listings from DOM`);
-    }
+    const results = await this.extractListingsFromDom(page);
+    this.logger.info(`Extracted ${results.length} listings from DOM`);
     
     return {
-      listings: results as unknown as RawListing[],
+      listings: results,
       totalFound: results.length,
     };
   }
 
   async scrapeDetailPage(page: Page, detailUrl: string): Promise<Partial<PropertyData>> {
     this.logger.info(`Navigating to detail: ${detailUrl}`);
-    
-    const detailApiResponses = await interceptResponses(page, this.getApiPattern());
-    await page.goto(detailUrl, { waitUntil: "networkidle2", timeout: 60000 });
-    
-    await new Promise(r => setTimeout(r, 2000));
-    
-    const result = await this.extractDetailData(detailApiResponses, detailUrl);
-    
-    // Fallback: if no API data, try DOM extraction for details
-    if (!result || Object.keys(result).length === 0) {
-      this.logger.info(`No API detail data, trying DOM extraction...`);
-      return this.extractDetailFromDom(page);
-    }
-    
-    return result;
-  }
-
-  // Optional fallback for detail pages
-  async extractDetailFromDom(_page: Page): Promise<Partial<PropertyData>> {
-    return {};
+    await page.goto(detailUrl, { waitUntil: "networkidle", timeout: 60000 });
+    await page.waitForTimeout(2000);
+    return this.extractDetailFromDom(page);
   }
 }
