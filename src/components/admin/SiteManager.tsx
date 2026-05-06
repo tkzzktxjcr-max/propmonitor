@@ -293,7 +293,7 @@ function SiteCard({ site, onEdit, onDelete }: SiteCardProps) {
           <div className="grid grid-cols-3 gap-4 pt-3 border-t">
             <div>
               <p className="text-xs text-slate-500 mb-1">Properties</p>
-              <p className="font-semibold">{site.properties_count.toLocaleString()}</p>
+              <p className="font-semibold">{(site.properties_count ?? 0).toLocaleString()}</p>
             </div>
             <div>
               <p className="text-xs text-slate-500 mb-1">Rate Limit</p>
