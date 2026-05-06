@@ -82,7 +82,7 @@ export function useScraperServerHealth() {
 }
 
 // ─────────────────────────────────────────────
-// TRIGGER NEW SCRAPE (using Scraper Server)
+// TRIGGER NEW SCRAPE (via Scraper Server only — no frontend Appwrite write)
 // ─────────────────────────────────────────────
 export function useTriggerScrape() {
   const queryClient = useQueryClient();
@@ -95,56 +95,7 @@ export function useTriggerScrape() {
     }): Promise<{ jobId: string; message: string }> => {
       console.log("[useTriggerScrape] Starting with params:", params);
 
-      // Step 1: Get site document ID from Appwrite
-      let siteId: string;
-      try {
-        const response = await databases.listDocuments(
-          DATABASE_ID,
-          COLLECTION_SITES,
-          [Query.equal("slug", params.source), Query.limit(1)]
-        );
-        
-        if (response.documents.length === 0) {
-          throw new Error(`Site not found: ${params.source}. Make sure the site slug matches exactly.`);
-        }
-        
-        siteId = response.documents[0].$id;
-        console.log("[useTriggerScrape] Site found, ID:", siteId);
-      } catch (error) {
-        logAppwriteError("useTriggerScrape - getSite", error);
-        throw error;
-      }
-
-      // Step 2: Create job document in Appwrite (for frontend tracking)
-      const documentData: Record<string, unknown> = {
-        site_id: siteId,
-        status: "pending",
-        trigger: params.trigger,
-        filters: JSON.stringify(params.filters || {}),
-        stats: JSON.stringify({ total_found: 0, new_listings: 0, updated: 0, failed: 0 }),
-        started_at: new Date().toISOString(),
-        completed_at: "",
-        error_message: "",
-        created_by: params.trigger === "agent" ? "hermes-agent" : "admin@realestate.be",
-      };
-
-      console.log("[useTriggerScrape] Creating job document in Appwrite...");
-      let jobId: string;
-      try {
-        const response = await databases.createDocument(
-          DATABASE_ID,
-          COLLECTION_JOBS,
-          ID.unique(),
-          documentData
-        );
-        jobId = response.$id;
-        console.log("[useTriggerScrape] Job document created:", jobId);
-      } catch (error) {
-        logAppwriteError("useTriggerScrape - createDocument", error);
-        throw error;
-      }
-
-      // Step 3: Call Scraper Server (instead of Appwrite Function)
+      // Step 1: Call Scraper Server directly — it will create the job in Appwrite using its API key
       console.log("[useTriggerScrape] Calling scraper server...");
       try {
         const result = await triggerScraper({
@@ -154,15 +105,10 @@ export function useTriggerScrape() {
         });
         
         console.log("[useTriggerScrape] Scraper server response:", result);
-        // Return our job ID for frontend tracking
-        return { jobId, message: result.message };
+        return { jobId: result.jobId, message: result.message };
       } catch (error) {
         console.error("[useTriggerScrape] Scraper server call failed:", error);
-        // Still return the job ID - user can see the error in job status
-        return { 
-          jobId, 
-          message: error instanceof Error ? error.message : "Failed to connect to scraper server" 
-        };
+        throw new Error(error instanceof Error ? error.message : "Failed to connect to scraper server");
       }
     },
     onSuccess: () => {
