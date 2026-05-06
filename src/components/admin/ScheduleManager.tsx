@@ -48,7 +48,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useRealtimeSchedules } from "@/hooks/useRealtime";
 
-const SCRAPER_API_URL = import.meta.env.VITE_SCRAPER_API_URL || "http://localhost:3001";
+const SCRAPER_API_URL = import.meta.env.VITE_SCRAPER_API_URL || "https://scrap.071098v2.duckdns.org";
 
 interface Schedule {
   $id: string;
