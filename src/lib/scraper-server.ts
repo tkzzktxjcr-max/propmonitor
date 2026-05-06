@@ -18,6 +18,21 @@ export interface TriggerScrapeResponse {
   };
 }
 
+export interface TestScrapeResponse {
+  success: boolean;
+  searchUrl: string;
+  listingsFound: number;
+  sampleListings: Array<{
+    source_id: string;
+    title: string;
+    price: number;
+    city: string;
+    url: string;
+  }>;
+  detailSample: Record<string, unknown> | null;
+  error?: string;
+}
+
 export interface JobStatusResponse {
   jobId: string;
   status: JobStatus;
@@ -70,6 +85,29 @@ export async function triggerScraper(params: TriggerScrapeParams): Promise<Trigg
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(error.message || error.error || "Failed to trigger scrape");
+  }
+
+  return response.json();
+}
+
+/**
+ * Run a test scrape without saving (returns raw results)
+ */
+export async function testScraper(source: PropertySource, filters?: ScrapingJobFilters): Promise<TestScrapeResponse> {
+  const response = await fetch(`${SCRAPER_API_URL}/api/scrape/test`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source,
+      filters,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.message || error.error || "Test scrape failed");
   }
 
   return response.json();

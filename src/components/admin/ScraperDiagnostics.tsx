@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Activity,
   Server,
@@ -10,8 +10,9 @@ import {
   Loader2,
   RefreshCw,
   Terminal,
-  ArrowRight,
   Play,
+  Bug,
+  ExternalLink,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,31 +21,45 @@ import { Separator } from "@/components/ui/separator";
 import { useScraperServerHealth } from "@/hooks/useScrapingJobs";
 import { useSites } from "@/hooks/useSites";
 import { useScrapingJobs } from "@/hooks/useScrapingJobs";
-import { checkScraperHealth, triggerScraper } from "@/lib/scraper-server";
+import { checkScraperHealth, testScraper } from "@/lib/scraper-server";
 import { cn } from "@/lib/utils";
 
 interface TestResult {
   name: string;
   status: "idle" | "running" | "success" | "error";
   message?: string;
-  duration?: number;
+}
+
+interface ScrapeTestResult {
+  source: string;
+  searchUrl: string;
+  listingsFound: number;
+  sampleListings: Array<{
+    source_id: string;
+    title: string;
+    price: number;
+    city: string;
+    url: string;
+  }>;
+  detailSample: Record<string, unknown> | null;
+  error?: string;
 }
 
 export function ScraperDiagnostics() {
-  const { data: health, isLoading: healthLoading, refetch: refetchHealth } = useScraperServerHealth();
-  const { data: sites, isLoading: sitesLoading } = useSites();
-  const { data: jobs, isLoading: jobsLoading } = useScrapingJobs();
+  const { data: health, refetch: refetchHealth } = useScraperServerHealth();
+  const { data: sites } = useSites();
+  const { data: jobs } = useScrapingJobs();
   
   const [tests, setTests] = useState<TestResult[]>([
     { name: "Scraper Server Reachable", status: "idle" },
     { name: "Appwrite Database Connection", status: "idle" },
     { name: "Queue System", status: "idle" },
-    { name: "Browser Pool", status: "idle" },
-    { name: "End-to-End Scrape Test", status: "idle" },
+    { name: "Scheduler Active", status: "idle" },
   ]);
   
-  const [testJobId, setTestJobId] = useState<string | null>(null);
   const [testLogs, setTestLogs] = useState<string[]>([]);
+  const [scrapeTest, setScrapeTest] = useState<ScrapeTestResult | null>(null);
+  const [isTestingScrape, setIsTestingScrape] = useState(false);
 
   const addLog = (msg: string) => {
     setTestLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -61,92 +76,92 @@ export function ScraperDiagnostics() {
   const runAllTests = async () => {
     setTestLogs([]);
     setTests((prev) => prev.map((t) => ({ ...t, status: "idle" })));
+    setScrapeTest(null);
     
     // Test 1: Server Reachable
     addLog("Testing scraper server connectivity...");
     updateTest(0, "running");
-    const start1 = Date.now();
     try {
       const result = await checkScraperHealth();
-      updateTest(0, "success", `v${result.version} • ${result.environment} • ${Date.now() - start1}ms`);
+      updateTest(0, "success", `v${result.version} • ${result.environment}`);
       addLog(`✅ Server online: ${result.status} (${result.version})`);
     } catch (error) {
       updateTest(0, "error", error instanceof Error ? error.message : "Connection failed");
-      addLog(`❌ Server unreachable: ${error instanceof Error ? error.message : "Unknown error"}`);
-      // Stop here if server is down
+      addLog(`❌ Server unreachable`);
       return;
     }
 
     // Test 2: Appwrite Database
-    addLog("Testing Appwrite database connection via scraper...");
     updateTest(1, "running");
-    const start2 = Date.now();
     try {
-      // The health endpoint already includes queue status which comes from Appwrite
       if (health?.queue) {
-        updateTest(1, "success", `Connected • ${Date.now() - start2}ms`);
+        updateTest(1, "success", "Connected");
         addLog("✅ Appwrite database accessible");
       } else {
-        throw new Error("No queue data in health response");
+        throw new Error("No queue data");
       }
     } catch (error) {
-      updateTest(1, "error", error instanceof Error ? error.message : "Database check failed");
-      addLog(`❌ Database issue: ${error instanceof Error ? error.message : "Unknown"}`);
+      updateTest(1, "error", "Database check failed");
+      addLog(`❌ Database issue`);
     }
 
     // Test 3: Queue System
-    addLog("Checking job queue status...");
     updateTest(2, "running");
     try {
       if (health?.queue) {
         const { running, queued } = health.queue;
         updateTest(2, "success", `${running} running, ${queued} queued`);
-        addLog(`✅ Queue healthy: ${running} running, ${queued} queued`);
+        addLog(`✅ Queue: ${running} running, ${queued} queued`);
       } else {
         throw new Error("Queue status unavailable");
       }
     } catch (error) {
-      updateTest(2, "error", error instanceof Error ? error.message : "Queue check failed");
-      addLog(`❌ Queue issue: ${error instanceof Error ? error.message : "Unknown"}`);
+      updateTest(2, "error", "Queue check failed");
     }
 
     // Test 4: Scheduler
-    addLog("Checking scheduler status...");
     updateTest(3, "running");
     try {
       if (health?.scheduler) {
         const { activeJobs } = health.scheduler;
         updateTest(3, "success", `${activeJobs} active schedules`);
-        addLog(`✅ Scheduler active: ${activeJobs} scheduled jobs`);
+        addLog(`✅ Scheduler: ${activeJobs} active schedules`);
       } else {
-        throw new Error("Scheduler status unavailable");
+        throw new Error("Scheduler unavailable");
       }
     } catch (error) {
-      updateTest(3, "error", error instanceof Error ? error.message : "Scheduler check failed");
-      addLog(`❌ Scheduler issue: ${error instanceof Error ? error.message : "Unknown"}`);
+      updateTest(3, "error", "Scheduler check failed");
     }
 
-    // Test 5: End-to-End (optional - just queue a tiny test)
-    addLog("Ready for end-to-end test. Click 'Run Test Scrape' to verify full pipeline.");
-    updateTest(4, "idle", "Click button below to test");
+    addLog("✅ All connectivity tests passed. Ready for scrape test.");
   };
 
-  const runTestScrape = async () => {
-    addLog("Triggering test scrape job...");
-    updateTest(4, "running");
+  const runScrapeTest = async (source: "immoweb" | "immovlan" | "zimmo") => {
+    setIsTestingScrape(true);
+    setScrapeTest(null);
+    addLog(`🧪 Starting REAL scrape test on ${source}...`);
+    
     try {
-      const result = await triggerScraper({
-        source: "immoweb",
-        trigger: "manual",
-        filters: { city: "Brussels", price_max: 500000 },
+      const result = await testScraper(source, { city: "Brussels", price_max: 500000 });
+      
+      setScrapeTest({
+        source,
+        ...result,
       });
-      setTestJobId(result.jobId);
-      updateTest(4, "success", `Job ${result.jobId} queued`);
-      addLog(`✅ Test job queued: ${result.jobId}`);
-      addLog("⏳ Check the Jobs tab to see progress...");
+      
+      if (result.success && result.listingsFound > 0) {
+        addLog(`✅ Scrape test SUCCESS: ${result.listingsFound} listings found on ${source}`);
+        addLog(`🔗 Search URL used: ${result.searchUrl}`);
+      } else if (result.success) {
+        addLog(`⚠️ Scrape test returned 0 listings. The site structure may have changed.`);
+        addLog(`🔗 URL tested: ${result.searchUrl}`);
+      } else {
+        addLog(`❌ Scrape test failed: ${result.error}`);
+      }
     } catch (error) {
-      updateTest(4, "error", error instanceof Error ? error.message : "Test scrape failed");
-      addLog(`❌ Test scrape failed: ${error instanceof Error ? error.message : "Unknown"}`);
+      addLog(`❌ Scrape test error: ${error instanceof Error ? error.message : "Unknown"}`);
+    } finally {
+      setIsTestingScrape(false);
     }
   };
 
@@ -186,17 +201,17 @@ export function ScraperDiagnostics() {
             Scraper Diagnostics
           </h3>
           <p className="text-sm text-slate-500">
-            Verify that every component of the scraping pipeline is healthy
+            Test connectivity and run real scrape tests to verify the pipeline
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => refetchHealth()}>
             <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh Health
+            Refresh
           </Button>
           <Button size="sm" onClick={runAllTests}>
             <Activity className="h-4 w-4 mr-2" />
-            Run All Tests
+            Run Connectivity Tests
           </Button>
         </div>
       </div>
@@ -267,10 +282,10 @@ export function ScraperDiagnostics() {
         </Card>
       </div>
 
-      {/* Test Results */}
+      {/* Connectivity Tests */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Component Tests</CardTitle>
+          <CardTitle className="text-base">Connectivity Tests</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
@@ -303,29 +318,121 @@ export function ScraperDiagnostics() {
               </div>
             ))}
           </div>
+        </CardContent>
+      </Card>
 
-          {tests[4]?.status === "idle" && tests[0]?.status === "success" && (
-            <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-dashed">
-              <p className="text-sm text-slate-600 mb-3">
-                Server is online. Run a test scrape to verify the full pipeline:
-              </p>
-              <Button onClick={runTestScrape} size="sm">
-                <Play className="h-4 w-4 mr-2" />
-                Run Test Scrape
+      {/* Real Scrape Test */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Bug className="h-4 w-4" />
+            Real Scrape Test
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-slate-600 mb-4">
+            This runs an actual scrape on the target site and shows raw results. No data is saved.
+          </p>
+          
+          <div className="flex flex-wrap gap-2 mb-4">
+            {(["immoweb", "immovlan", "zimmo"] as const).map((source) => (
+              <Button
+                key={source}
+                variant="outline"
+                size="sm"
+                onClick={() => runScrapeTest(source)}
+                disabled={isTestingScrape}
+              >
+                {isTestingScrape ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4 mr-2" />
+                )}
+                Test {source.charAt(0).toUpperCase() + source.slice(1)}
               </Button>
-            </div>
-          )}
+            ))}
+          </div>
 
-          {testJobId && (
-            <div className="mt-4 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <span className="text-sm font-medium text-emerald-800">Test job created</span>
+          {scrapeTest && (
+            <div className="space-y-4">
+              <div className={cn(
+                "p-4 rounded-lg border",
+                scrapeTest.listingsFound > 0 ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"
+              )}>
+                <div className="flex items-center gap-2 mb-2">
+                  {scrapeTest.listingsFound > 0 ? (
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  ) : (
+                    <AlertTriangle className="h-5 w-5 text-amber-600" />
+                  )}
+                  <span className={cn(
+                    "font-semibold",
+                    scrapeTest.listingsFound > 0 ? "text-emerald-800" : "text-amber-800"
+                  )}>
+                    {scrapeTest.listingsFound > 0 
+                      ? `${scrapeTest.listingsFound} listings found on ${scrapeTest.source}`
+                      : `No listings found on ${scrapeTest.source}`
+                    }
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-2 text-sm mb-3">
+                  <span className="text-slate-500">Search URL:</span>
+                  <a 
+                    href={scrapeTest.searchUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline flex items-center gap-1"
+                  >
+                    Open in browser <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+
+                {scrapeTest.error && (
+                  <p className="text-sm text-red-600 mb-3">
+                    Error: {scrapeTest.error}
+                  </p>
+                )}
               </div>
-              <p className="text-xs text-emerald-700 font-mono mb-2">{testJobId}</p>
-              <p className="text-xs text-emerald-600">
-                Go to the <strong>Scraping Jobs</strong> tab to monitor progress.
-              </p>
+
+              {scrapeTest.sampleListings.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Sample Listings Found:</h4>
+                  <div className="space-y-2">
+                    {scrapeTest.sampleListings.map((listing, i) => (
+                      <div key={i} className="p-3 bg-white rounded border text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium truncate flex-1">{listing.title}</span>
+                          <span className="text-blue-600 font-semibold ml-2">
+                            €{listing.price.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                          <span>{listing.city}</span>
+                          <span>ID: {listing.source_id}</span>
+                          <a 
+                            href={listing.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline flex items-center gap-0.5"
+                          >
+                            View <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {scrapeTest.detailSample && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Detail Page Sample (1st listing):</h4>
+                  <pre className="bg-slate-950 text-slate-300 p-3 rounded-lg text-xs overflow-x-auto">
+                    {JSON.stringify(scrapeTest.detailSample, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -350,10 +457,11 @@ export function ScraperDiagnostics() {
                 <div
                   key={i}
                   className={cn(
-                    log.startsWith("✅") && "text-emerald-400",
-                    log.startsWith("❌") && "text-red-400",
-                    log.startsWith("⏳") && "text-amber-400",
-                    !log.startsWith("✅") && !log.startsWith("❌") && !log.startsWith("⏳") && "text-slate-300"
+                    log.includes("✅") && "text-emerald-400",
+                    log.includes("❌") && "text-red-400",
+                    log.includes("⚠️") && "text-amber-400",
+                    log.includes("🧪") && "text-blue-400",
+                    !log.includes("✅") && !log.includes("❌") && !log.includes("⚠️") && !log.includes("🧪") && "text-slate-300"
                   )}
                 >
                   {log}
@@ -374,9 +482,11 @@ export function ScraperDiagnostics() {
             <div className="flex gap-3">
               <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0" />
               <div>
-                <p className="font-medium">Server shows "Offline"</p>
+                <p className="font-medium">0 listings found but server is online</p>
                 <p className="text-slate-600">
-                  Check that the scraper-server is running. Verify <code>VITE_SCRAPER_API_URL</code> in your <code>.env</code> file points to the correct URL.
+                  The target site may have changed its API structure or is blocking headless browsers. 
+                  Click the <strong>Search URL</strong> link to verify the page loads correctly in a normal browser.
+                  If it works in your browser but not in the scraper, the site likely has anti-bot protection.
                 </p>
               </div>
             </div>
@@ -386,9 +496,10 @@ export function ScraperDiagnostics() {
             <div className="flex gap-3">
               <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0" />
               <div>
-                <p className="font-medium">Test scrape fails immediately</p>
+                <p className="font-medium">Detail page returns empty data</p>
                 <p className="text-slate-600">
-                  Check Appwrite permissions: the scraper-server needs <code>APPWRITE_API_KEY</code> with database write access. Also verify <code>APPWRITE_DATABASE_ID</code> matches your database.
+                  The detail page API pattern may not match. Check the scraper-server logs for intercepted URLs.
+                  The site might load details via a different endpoint than expected.
                 </p>
               </div>
             </div>
@@ -400,7 +511,8 @@ export function ScraperDiagnostics() {
               <div>
                 <p className="font-medium">Job stays "pending" forever</p>
                 <p className="text-slate-600">
-                  The job queue may be stuck. Check scraper-server logs. Try restarting the server. Ensure <code>MAX_CONCURRENT_JOBS</code> is not set to 0.
+                  The job queue may be stuck. Check scraper-server logs. Try restarting the server. 
+                  Ensure <code>MAX_CONCURRENT_JOBS</code> is not set to 0.
                 </p>
               </div>
             </div>
@@ -410,9 +522,10 @@ export function ScraperDiagnostics() {
             <div className="flex gap-3">
               <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0" />
               <div>
-                <p className="font-medium">No properties appear after scrape</p>
+                <p className="font-medium">Test works but real scrape fails</p>
                 <p className="text-slate-600">
-                  The scraper may be blocked by the target site. Check the <strong>Logs</strong> tab for ERROR entries. Verify the site hasn't changed its HTML/API structure.
+                  The test only scrapes 1 page. Real scrapes process multiple listings and may hit rate limits.
+                  Check if <code>REQUEST_DELAY_MS</code> is high enough (minimum 2000ms recommended).
                 </p>
               </div>
             </div>
