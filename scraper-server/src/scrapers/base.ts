@@ -50,6 +50,7 @@ export abstract class BaseScraper {
   abstract parseSearchResults(responses: InterceptedResponse[]): SearchResultItem[];
   abstract extractDetailData(responses: InterceptedResponse[], url: string): Promise<Partial<PropertyData>>;
   abstract buildSearchUrl(filters?: ScraperFilters): string;
+  abstract extractFromDom(page: Page): Promise<SearchResultItem[]>;
 
   async scrapeSearchPage(page: Page, searchUrl: string): Promise<ScrapeResult> {
     this.logger.info(`Navigating to search: ${searchUrl}`);
@@ -59,9 +60,19 @@ export abstract class BaseScraper {
     
     await new Promise(r => setTimeout(r, 3000));
     
-    const results = this.parseSearchResults(apiResponses);
+    // Log all intercepted URLs for debugging
+    const interceptedUrls = apiResponses.map(r => r.url);
+    this.logger.info(`Intercepted ${apiResponses.length} API responses`, { urls: interceptedUrls.slice(0, 5) });
     
+    let results = this.parseSearchResults(apiResponses);
     this.logger.info(`Parsed ${results.length} listings from API responses`);
+    
+    // Fallback: if no API results, extract from DOM
+    if (results.length === 0) {
+      this.logger.info(`No API results found, falling back to DOM extraction...`);
+      results = await this.extractFromDom(page);
+      this.logger.info(`Extracted ${results.length} listings from DOM`);
+    }
     
     return {
       listings: results as unknown as RawListing[],
@@ -77,6 +88,19 @@ export abstract class BaseScraper {
     
     await new Promise(r => setTimeout(r, 2000));
     
-    return this.extractDetailData(detailApiResponses, detailUrl);
+    const result = await this.extractDetailData(detailApiResponses, detailUrl);
+    
+    // Fallback: if no API data, try DOM extraction for details
+    if (!result || Object.keys(result).length === 0) {
+      this.logger.info(`No API detail data, trying DOM extraction...`);
+      return this.extractDetailFromDom(page);
+    }
+    
+    return result;
+  }
+
+  // Optional fallback for detail pages
+  async extractDetailFromDom(_page: Page): Promise<Partial<PropertyData>> {
+    return {};
   }
 }

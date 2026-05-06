@@ -59,6 +59,81 @@ export class ImmovlanScraper extends BaseScraper {
     return listings;
   }
 
+  async extractFromDom(page: Page): Promise<SearchResultItem[]> {
+    return page.evaluate(() => {
+      const listings: SearchResultItem[] = [];
+      
+      // Try multiple selectors
+      const selectors = [
+        '.property-card',
+        '.search-result',
+        '.listing-item',
+        '[data-testid="property-card"]',
+        '.result-item',
+      ];
+      
+      let cards: NodeListOf<Element> | null = null;
+      for (const selector of selectors) {
+        cards = document.querySelectorAll(selector);
+        if (cards.length > 0) break;
+      }
+      
+      if (!cards || cards.length === 0) {
+        // Fallback: find links to detail pages
+        const links = document.querySelectorAll('a[href*="/detail/"]');
+        const seen = new Set<string>();
+        links.forEach(link => {
+          const href = (link as HTMLAnchorElement).href;
+          if (seen.has(href)) return;
+          seen.add(href);
+          
+          const container = link.closest('article, .card, .item, .result') || link.parentElement;
+          const title = container?.querySelector('h2, h3, .title')?.textContent?.trim() 
+            || link.textContent?.trim() 
+            || "";
+          
+          const priceText = container?.querySelector('.price')?.textContent?.trim() || "";
+          const price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
+          
+          const idMatch = href.match(/\/detail\/(\d+)/);
+          const source_id = idMatch ? idMatch[1] : "";
+          
+          if (source_id && title) {
+            listings.push({ source_id, url: href, title, price, city: "", type: "house" });
+          }
+        });
+        return listings;
+      }
+      
+      cards.forEach((card) => {
+        try {
+          const linkEl = card.querySelector('a[href*="/detail/"]') as HTMLAnchorElement | null;
+          const url = linkEl?.href || "";
+          const idMatch = url.match(/\/detail\/(\d+)/);
+          const source_id = idMatch ? idMatch[1] : "";
+          
+          const titleEl = card.querySelector('h2, h3, .title');
+          const title = titleEl?.textContent?.trim() || "";
+          
+          const priceEl = card.querySelector('.price');
+          const priceText = priceEl?.textContent?.trim() || "";
+          const price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
+          
+          const cityEl = card.querySelector('.location, .city, .address');
+          const city = cityEl?.textContent?.trim() || "";
+          
+          if (source_id && title) {
+            listings.push({ source_id, url, title, price, city, type: "house" });
+          }
+        } catch {
+          // Skip
+        }
+      });
+      
+      return listings;
+    }) as Promise<SearchResultItem[]>;
+  }
+
   async extractDetailData(responses: InterceptedResponse[], url: string): Promise<Partial<PropertyData>> {
     for (const response of responses) {
       try {
@@ -93,5 +168,23 @@ export class ImmovlanScraper extends BaseScraper {
     }
 
     return {};
+  }
+
+  async extractDetailFromDom(page: Page): Promise<Partial<PropertyData>> {
+    return page.evaluate(() => {
+      const result: Partial<PropertyData> = {};
+      
+      const titleEl = document.querySelector('h1, .property-title');
+      result.title = titleEl?.textContent?.trim() || "";
+      
+      const priceEl = document.querySelector('.price, .property-price');
+      const priceText = priceEl?.textContent?.trim() || "";
+      result.price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
+      
+      const descEl = document.querySelector('.description, .property-description');
+      result.description = descEl?.textContent?.trim() || "";
+      
+      return result;
+    }) as Promise<Partial<PropertyData>>;
   }
 }

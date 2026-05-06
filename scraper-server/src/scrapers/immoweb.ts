@@ -69,6 +69,112 @@ export class ImmowebScraper extends BaseScraper {
     return listings;
   }
 
+  async extractFromDom(page: Page): Promise<SearchResultItem[]> {
+    return page.evaluate(() => {
+      const listings: SearchResultItem[] = [];
+      
+      // Try multiple selectors for property cards
+      const selectors = [
+        '.card--result',
+        '.search-results__item',
+        '[data-testid="property-card"]',
+        '.property-card',
+        '.classified',
+        '.iw-search-list',
+        '.listing-item',
+      ];
+      
+      let cards: NodeListOf<Element> | null = null;
+      for (const selector of selectors) {
+        cards = document.querySelectorAll(selector);
+        if (cards.length > 0) break;
+      }
+      
+      if (!cards || cards.length === 0) {
+        // Last resort: find any links to classified pages
+        const links = document.querySelectorAll('a[href*="/classified/"]');
+        const seen = new Set<string>();
+        links.forEach(link => {
+          const href = (link as HTMLAnchorElement).href;
+          if (seen.has(href)) return;
+          seen.add(href);
+          
+          const titleEl = link.querySelector('h2, h3, .title, [data-testid="title"]') 
+            || link.closest('article, .card, .item')?.querySelector('h2, h3, .title');
+          const priceEl = link.closest('article, .card, .item')?.querySelector('.price, [data-testid="price"], .sr-only');
+          
+          const title = titleEl?.textContent?.trim() || "";
+          const priceText = priceEl?.textContent?.trim() || "";
+          const price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
+          
+          // Extract ID from URL
+          const idMatch = href.match(/\/classified\/(\d+)/);
+          const source_id = idMatch ? idMatch[1] : "";
+          
+          if (source_id && title) {
+            listings.push({
+              source_id,
+              url: href,
+              title,
+              price,
+              city: "",
+              type: "house",
+            });
+          }
+        });
+        return listings;
+      }
+      
+      cards.forEach((card) => {
+        try {
+          // Try to find link
+          const linkEl = card.querySelector('a[href*="/classified/"]') as HTMLAnchorElement | null;
+          const url = linkEl?.href || "";
+          
+          // Extract ID from URL
+          const idMatch = url.match(/\/classified\/(\d+)/);
+          const source_id = idMatch ? idMatch[1] : "";
+          
+          // Title
+          const titleEl = card.querySelector('h2, h3, .title, .card__title, [data-testid="title"]');
+          const title = titleEl?.textContent?.trim() || "";
+          
+          // Price
+          const priceEl = card.querySelector('.price, .card__price, [data-testid="price"], .sr-only');
+          const priceText = priceEl?.textContent?.trim() || "";
+          const price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
+          
+          // City
+          const cityEl = card.querySelector('.location, .city, .address, [data-testid="location"]');
+          const city = cityEl?.textContent?.trim() || "";
+          
+          // Type
+          const typeText = card.textContent?.toLowerCase() || "";
+          let type = "house";
+          if (typeText.includes("apartment") || typeText.includes("flat")) type = "apartment";
+          else if (typeText.includes("studio")) type = "studio";
+          else if (typeText.includes("villa")) type = "villa";
+          else if (typeText.includes("commercial") || typeText.includes("office")) type = "commercial";
+          
+          if (source_id && title) {
+            listings.push({
+              source_id,
+              url,
+              title,
+              price,
+              city,
+              type,
+            });
+          }
+        } catch {
+          // Skip invalid cards
+        }
+      });
+      
+      return listings;
+    }) as Promise<SearchResultItem[]>;
+  }
+
   async extractDetailData(responses: InterceptedResponse[], url: string): Promise<Partial<PropertyData>> {
     for (const response of responses) {
       try {
@@ -104,5 +210,32 @@ export class ImmowebScraper extends BaseScraper {
     }
 
     return {};
+  }
+
+  async extractDetailFromDom(page: Page): Promise<Partial<PropertyData>> {
+    return page.evaluate(() => {
+      const result: Partial<PropertyData> = {};
+      
+      // Title
+      const titleEl = document.querySelector('h1, .classified__title, [data-testid="title"]');
+      result.title = titleEl?.textContent?.trim() || "";
+      
+      // Price
+      const priceEl = document.querySelector('.classified__price, [data-testid="price"], .price');
+      const priceText = priceEl?.textContent?.trim() || "";
+      result.price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
+      
+      // Description
+      const descEl = document.querySelector('.classified__description, .description, [data-testid="description"]');
+      result.description = descEl?.textContent?.trim() || "";
+      
+      // City
+      const cityEl = document.querySelector('.classified__address, .address, [data-testid="address"]');
+      const addressText = cityEl?.textContent?.trim() || "";
+      result.city = addressText.split(',')[0]?.trim() || "";
+      result.address = addressText;
+      
+      return result;
+    }) as Promise<Partial<PropertyData>>;
   }
 }

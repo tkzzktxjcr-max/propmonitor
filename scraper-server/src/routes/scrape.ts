@@ -117,9 +117,26 @@ scrapeRouter.post("/test", async (req: Request, res: Response) => {
     
     const result = await runTestScrape(source, filters);
     
+    // Add diagnostic info when 0 listings found
+    if (result.listingsFound === 0) {
+      logger.warn(`Test scrape returned 0 listings for ${source}`, { 
+        searchUrl: result.searchUrl,
+        hasDetailSample: !!result.detailSample,
+      });
+    }
+    
     return res.json({
       success: !result.error,
       ...result,
+      diagnostic: result.listingsFound === 0 ? {
+        tip: "The site may use anti-bot protection or have changed its HTML structure. Try opening the searchUrl in a regular browser to verify.",
+        possibleCauses: [
+          "Anti-bot protection (Cloudflare, DataDome, etc.)",
+          "Site requires JavaScript rendering that Puppeteer didn't execute",
+          "HTML selectors have changed",
+          "Site blocked the headless browser",
+        ],
+      } : undefined,
     });
   } catch (error) {
     logger.error("Test scrape failed", { error: error instanceof Error ? error.message : String(error) });
