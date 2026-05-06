@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { account, databases, DATABASE_ID, COLLECTION_USERS, ID } from "@/lib/appwrite";
+import { account, databases, DATABASE_ID, COLLECTION_USERS, ID, Query } from "@/lib/appwrite";
 import type { User, UserRole } from "@/types";
 
 const defaultUser: User = {
@@ -15,9 +15,33 @@ const defaultUser: User = {
   created_at: new Date().toISOString()
 };
 
+async function isFirstUser(): Promise<boolean> {
+  try {
+    const response = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTION_USERS,
+      [Query.limit(1)]
+    );
+    return response.documents.length === 0;
+  } catch (error) {
+    console.error("[isFirstUser] Failed to check users collection — does it exist?", error);
+    return true;
+  }
+}
+
 async function fetchOrCreateUserProfile(accountUser: { $id: string; name: string; email: string }): Promise<User> {
+  console.log("[fetchOrCreateUserProfile] Auth user ID:", accountUser.$id);
+
+  if (!accountUser.$id) {
+    console.error("[fetchOrCreateUserProfile] CRITICAL: accountUser.$id is missing!");
+    throw new Error("Auth user ID is missing — cannot link profile document");
+  }
+
+  // 1. Try to read existing profile
   try {
     const doc = await databases.getDocument(DATABASE_ID, COLLECTION_USERS, accountUser.$id);
+    console.log("[fetchOrCreateUserProfile] Found existing profile, role:", doc.role);
+    
     return {
       $id: doc.$id,
       name: doc.name || accountUser.name,
@@ -28,17 +52,24 @@ async function fetchOrCreateUserProfile(accountUser: { $id: string; name: string
         : doc.preferences || { default_map_view: false, favorite_sources: ["immoweb", "immovlan", "zimmo"] },
       created_at: doc.created_at || new Date().toISOString(),
     };
-  } catch {
-    // Document doesn't exist yet — create it with viewer role
+  } catch (readError) {
+    console.log("[fetchOrCreateUserProfile] No profile found, creating new one...");
+    
+    // 2. Determine role (first user = admin)
+    const firstUser = await isFirstUser();
+    const assignedRole: UserRole = firstUser ? "admin" : "viewer";
+    console.log("[fetchOrCreateUserProfile] Assigning role:", assignedRole, "(firstUser:", firstUser, ")");
+
+    // 3. Create profile document
     try {
       await databases.createDocument(
         DATABASE_ID,
         COLLECTION_USERS,
-        accountUser.$id,
+        accountUser.$id, // Same ID as Auth user!
         {
           name: accountUser.name,
           email: accountUser.email,
-          role: "viewer",
+          role: assignedRole,
           preferences: JSON.stringify({
             default_map_view: false,
             favorite_sources: ["immoweb", "immovlan", "zimmo"],
@@ -46,15 +77,17 @@ async function fetchOrCreateUserProfile(accountUser: { $id: string; name: string
           created_at: new Date().toISOString(),
         }
       );
+      console.log("[fetchOrCreateUserProfile] Profile created successfully with ID:", accountUser.$id);
     } catch (createError) {
-      console.warn("[useAuth] Could not create user profile document:", createError);
+      console.error("[fetchOrCreateUserProfile] FAILED to create profile document:", createError);
+      console.error("→ This usually means the 'users' collection does not exist in Appwrite Console");
     }
 
     return {
       $id: accountUser.$id,
       name: accountUser.name,
       email: accountUser.email,
-      role: "viewer",
+      role: assignedRole,
       preferences: {
         default_map_view: false,
         favorite_sources: ["immoweb", "immovlan", "zimmo"],
@@ -76,10 +109,15 @@ export function useAuth() {
   const checkAuth = async () => {
     try {
       const appwriteUser = await account.get();
+      console.log("[useAuth] Logged in as:", appwriteUser.$id, appwriteUser.name);
+      
       const profile = await fetchOrCreateUserProfile(appwriteUser);
+      console.log("[useAuth] Profile loaded, role:", profile.role);
+      
       setUser(profile);
       setIsAuthenticated(true);
-    } catch {
+    } catch (error) {
+      console.log("[useAuth] Not authenticated");
       setUser(null);
       setIsAuthenticated(false);
     } finally {
@@ -101,6 +139,8 @@ export function useAuth() {
   const register = useCallback(async (email: string, password: string, name: string) => {
     try {
       const accountUser = await account.create(ID.unique(), email, password, name);
+      console.log("[register] Auth account created:", accountUser.$id);
+      
       await account.createEmailPasswordSession(email, password);
       await checkAuth();
       return user;
