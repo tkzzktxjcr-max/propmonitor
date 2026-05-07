@@ -42,7 +42,6 @@ export async function runScraper(params: ScrapeParams): Promise<void> {
     const page = await browserPool.createPage();
     
     try {
-      await handleCookieConsent(page);
       const searchUrl = scraper.buildSearchUrl(filters);
       jobLogger.info(`Search URL: ${searchUrl}`);
       
@@ -138,7 +137,6 @@ export async function runTestScrape(source: ScraperSource, filters?: ScraperFilt
   const page = await browserPool.createPage();
 
   try {
-    await handleCookieConsent(page);
     const searchUrl = scraper.buildSearchUrl(filters);
     logger.info(`[TEST] Search URL: ${searchUrl}`);
     

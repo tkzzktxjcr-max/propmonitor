@@ -20,6 +20,59 @@ export class ImmowebScraper extends BaseScraper {
     return url;
   }
 
+  async interceptApiListings(page: Page): Promise<SearchResultItem[]> {
+    const listings: SearchResultItem[] = [];
+    
+    page.on("response", async (response) => {
+      const url = response.url();
+      if (url.includes("immoweb.be") && (url.includes("/search/") || url.includes("/classifieds/") || url.includes("/api/"))) {
+        try {
+          const contentType = response.headers()["content-type"] || "";
+          if (contentType.includes("application/json")) {
+            const data = await response.json();
+            const items = this.parseApiResponse(data);
+            listings.push(...items);
+          }
+        } catch {}
+      }
+    });
+    
+    // Wait a bit for API calls
+    await new Promise(r => setTimeout(r, 5000));
+    return listings;
+  }
+
+  private parseApiResponse(data: unknown): SearchResultItem[] {
+    const listings: SearchResultItem[] = [];
+    try {
+      const d = data as Record<string, unknown>;
+      const results = d.results || d.classifieds || d.items || d.data || [];
+      const items = Array.isArray(results) ? results : [];
+      
+      for (const item of items) {
+        const i = item as Record<string, unknown>;
+        const id = String(i.id || i.classifiedId || i.source_id || "");
+        const url = String(i.url || i.permalink || i.detailUrl || "");
+        const title = String(i.title || i.property?.title || i.description || "");
+        const price = Number(i.price || i.transaction?.sale?.price || i.salePrice || 0);
+        const city = String(i.city || i.location?.city || i.address?.city || "");
+        const type = String(i.propertyType || i.type || "house");
+        
+        if (id && title && price > 0) {
+          listings.push({
+            source_id: id,
+            url: url || `https://www.immoweb.be/en/classified/${id}`,
+            title,
+            price,
+            city,
+            type: normalizePropertyType(type),
+          });
+        }
+      }
+    } catch {}
+    return listings;
+  }
+
   async extractListingsFromDom(page: Page): Promise<SearchResultItem[]> {
     // Try multiple known selectors
     const selectors = [
@@ -29,6 +82,8 @@ export class ImmowebScraper extends BaseScraper {
       '.search-results__item',
       '.property-card',
       '.classified',
+      '[class*="result"]',
+      '[class*="card"]',
     ];
 
     for (const selector of selectors) {

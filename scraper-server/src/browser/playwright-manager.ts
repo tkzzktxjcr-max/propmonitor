@@ -29,8 +29,13 @@ class PlaywrightBrowserPool {
     this.isLaunching = true;
     try {
       logger.info("Launching Playwright browser");
+      
+      // Use headless: "shell" for less detectability (Playwright 1.49+)
+      // Fallback to true for older versions
+      const headlessOpt = (config.browser.headless ? "shell" : false) as "shell" | false;
+      
       this.browser = await chromium.launch({
-        headless: config.browser.headless,
+        headless: headlessOpt,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -38,6 +43,15 @@ class PlaywrightBrowserPool {
           "--disable-gpu",
           "--disable-blink-features=AutomationControlled",
           "--window-size=1920,1080",
+          "--disable-web-security",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--disable-site-isolation-trials",
+          "--disable-extensions",
+          "--disable-default-apps",
+          "--no-first-run",
+          "--no-default-browser-check",
+          "--password-store=basic",
+          "--use-mock-keychain",
         ],
       });
       logger.info("Playwright browser launched");
@@ -66,11 +80,44 @@ class PlaywrightBrowserPool {
         "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
         "Sec-Ch-Ua-Mobile": "?0",
         "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
       },
     });
 
     this.contexts.push(context);
     const page = await context.newPage();
+    
+    // Inject anti-detection script
+    await page.addInitScript(() => {
+      // Override navigator.webdriver
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+      });
+      
+      // Override permissions
+      const originalQuery = window.navigator.permissions.query;
+      window.navigator.permissions.query = (parameters: PermissionDescriptor) => {
+        if (parameters.name === 'notifications') {
+          return Promise.resolve({ state: 'prompt', onchange: null, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true } as PermissionStatus);
+        }
+        return originalQuery(parameters);
+      };
+      
+      // Override plugins
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      
+      // Override languages
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en', 'nl', 'fr'],
+      });
+    });
+    
     page.setDefaultTimeout(config.browser.timeout);
     page.setDefaultNavigationTimeout(config.browser.timeout);
     return page;
@@ -115,6 +162,13 @@ export async function handleCookieConsent(page: Page): Promise<void> {
     '#didomi-notice-agree-button',
     'button[class*="cookie"]',
     '.cookie-consent button',
+    '[id*="onetrust-accept"]',
+    '[class*="onetrust-accept"]',
+    'button:has-text("Accept")',
+    'button:has-text("Accepter")',
+    'button:has-text("Akkoord")',
+    'button:has-text("I agree")',
+    'button:has-text("Allow")',
   ];
 
   for (const selector of consentSelectors) {
@@ -137,4 +191,23 @@ export async function takeDebugScreenshot(page: Page, name: string): Promise<str
   const filePath = path.join(dir, `${name}-${Date.now()}.png`);
   await page.screenshot({ path: filePath, fullPage: true });
   return filePath;
+}
+
+export async function scrollToBottom(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => {
+      let totalHeight = 0;
+      const distance = 300;
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight;
+        window.scrollBy(0, distance);
+        totalHeight += distance;
+        if (totalHeight >= scrollHeight) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 100);
+    });
+  });
+  await page.waitForTimeout(1000);
 }

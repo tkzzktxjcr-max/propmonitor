@@ -15,6 +15,58 @@ export class ZimmoScraper extends BaseScraper {
     return url;
   }
 
+  async interceptApiListings(page: Page): Promise<SearchResultItem[]> {
+    const listings: SearchResultItem[] = [];
+    
+    page.on("response", async (response) => {
+      const url = response.url();
+      if (url.includes("zimmo.be") && (url.includes("/search/") || url.includes("/api/") || url.includes("/listings/"))) {
+        try {
+          const contentType = response.headers()["content-type"] || "";
+          if (contentType.includes("application/json")) {
+            const data = await response.json();
+            const items = this.parseApiResponse(data);
+            listings.push(...items);
+          }
+        } catch {}
+      }
+    });
+    
+    await new Promise(r => setTimeout(r, 5000));
+    return listings;
+  }
+
+  private parseApiResponse(data: unknown): SearchResultItem[] {
+    const listings: SearchResultItem[] = [];
+    try {
+      const d = data as Record<string, unknown>;
+      const results = d.results || d.items || d.data || d.listings || [];
+      const items = Array.isArray(results) ? results : [];
+      
+      for (const item of items) {
+        const i = item as Record<string, unknown>;
+        const id = String(i.id || i.listingId || i.source_id || "");
+        const url = String(i.url || i.detailUrl || i.permalink || "");
+        const title = String(i.title || i.property?.title || "");
+        const price = Number(i.price || i.salePrice || i.transaction?.price || 0);
+        const city = String(i.city || i.location?.city || i.address?.city || "");
+        const type = String(i.propertyType || i.type || "house");
+        
+        if (id && title && price > 0) {
+          listings.push({
+            source_id: id,
+            url: url || `https://www.zimmo.be/${id}`,
+            title,
+            price,
+            city,
+            type: type.toLowerCase(),
+          });
+        }
+      }
+    } catch {}
+    return listings;
+  }
+
   async extractListingsFromDom(page: Page): Promise<SearchResultItem[]> {
     const selectors = [
       '.property-card',
@@ -22,6 +74,8 @@ export class ZimmoScraper extends BaseScraper {
       '.listing-item',
       '.result-item',
       '[data-testid="property"]',
+      '[class*="card"]',
+      '[class*="result"]',
     ];
 
     for (const selector of selectors) {
