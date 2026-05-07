@@ -101,7 +101,7 @@ export function useTriggerScrape() {
         const result = await triggerScraper({
           source: params.source,
           trigger: params.trigger,
-          filters: params.filters,
+          filters: params.filters as Record<string, unknown> | undefined,
         });
         
         console.log("[useTriggerScrape] Scraper server response:", result);
