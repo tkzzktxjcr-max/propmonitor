@@ -1,11 +1,14 @@
 # ─────────────────────────────────────────────
-# BUILD STAGE
+# SCRAPER SERVER - Multi-stage Dockerfile
+# Optimized for Coolify deployment
 # ─────────────────────────────────────────────
+
+# ─── Builder Stage ───
 FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies for native modules
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
@@ -15,21 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies (use npm ci if lockfile exists, otherwise npm install)
+# Install dependencies
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copy source and build
 COPY . .
 RUN npm run build
 
-# ─────────────────────────────────────────────
-# PRODUCTION STAGE
-# ─────────────────────────────────────────────
+# ─── Production Stage ───
 FROM node:20-slim AS production
 
 WORKDIR /app
 
-# Install Chromium and dependencies for Puppeteer
+# Install Chromium and dependencies for Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-liberation \
@@ -71,20 +72,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV BROWSER_HEADLESS=true
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
+# Expose port
+EXPOSE 3001
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 
-EXPOSE 3001
-
+# Start the server
 CMD ["node", "dist/index.js"]
