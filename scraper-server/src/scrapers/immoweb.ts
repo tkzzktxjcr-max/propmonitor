@@ -54,7 +54,17 @@ export class ImmowebScraper extends BaseScraper {
         const id = String(i.id || i.classifiedId || i.source_id || "");
         const url = String(i.url || i.permalink || i.detailUrl || "");
         const title = String(i.title || (i.property as Record<string, unknown>)?.title || i.description || "");
-        const price = Number(i.price || (i.transaction as Record<string, unknown>)?.sale?.price || i.salePrice || 0);
+        
+        // Safely extract price from nested transaction object
+        let price = 0;
+        const transaction = i.transaction as Record<string, unknown> | undefined;
+        if (transaction) {
+          const sale = transaction.sale as Record<string, unknown> | undefined;
+          price = Number(sale?.price || i.price || i.salePrice || 0);
+        } else {
+          price = Number(i.price || i.salePrice || 0);
+        }
+        
         const city = String(i.city || (i.location as Record<string, unknown>)?.city || (i.address as Record<string, unknown>)?.city || "");
         const type = String(i.propertyType || i.type || "house");
         
