@@ -47,9 +47,9 @@ export class ZimmoScraper extends BaseScraper {
         const i = item as Record<string, unknown>;
         const id = String(i.id || i.listingId || i.source_id || "");
         const url = String(i.url || i.detailUrl || i.permalink || "");
-        const title = String(i.title || i.property?.title || "");
-        const price = Number(i.price || i.salePrice || i.transaction?.price || 0);
-        const city = String(i.city || i.location?.city || i.address?.city || "");
+        const title = String(i.title || (i.property as Record<string, unknown>)?.title || "");
+        const price = Number(i.price || i.salePrice || (i.transaction as Record<string, unknown>)?.price || 0);
+        const city = String(i.city || (i.location as Record<string, unknown>)?.city || (i.address as Record<string, unknown>)?.city || "");
         const type = String(i.propertyType || i.type || "house");
         
         if (id && title && price > 0) {

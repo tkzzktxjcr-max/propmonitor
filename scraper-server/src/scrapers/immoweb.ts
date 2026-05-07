@@ -53,9 +53,9 @@ export class ImmowebScraper extends BaseScraper {
         const i = item as Record<string, unknown>;
         const id = String(i.id || i.classifiedId || i.source_id || "");
         const url = String(i.url || i.permalink || i.detailUrl || "");
-        const title = String(i.title || i.property?.title || i.description || "");
-        const price = Number(i.price || i.transaction?.sale?.price || i.salePrice || 0);
-        const city = String(i.city || i.location?.city || i.address?.city || "");
+        const title = String(i.title || (i.property as Record<string, unknown>)?.title || i.description || "");
+        const price = Number(i.price || (i.transaction as Record<string, unknown>)?.sale?.price || i.salePrice || 0);
+        const city = String(i.city || (i.location as Record<string, unknown>)?.city || (i.address as Record<string, unknown>)?.city || "");
         const type = String(i.propertyType || i.type || "house");
         
         if (id && title && price > 0) {

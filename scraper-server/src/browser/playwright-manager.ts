@@ -30,12 +30,8 @@ class PlaywrightBrowserPool {
     try {
       logger.info("Launching Playwright browser");
       
-      // Use headless: "shell" for less detectability (Playwright 1.49+)
-      // Fallback to true for older versions
-      const headlessOpt = (config.browser.headless ? "shell" : false) as "shell" | false;
-      
       this.browser = await chromium.launch({
-        headless: headlessOpt,
+        headless: config.browser.headless,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -102,7 +98,7 @@ class PlaywrightBrowserPool {
       const originalQuery = window.navigator.permissions.query;
       window.navigator.permissions.query = (parameters: PermissionDescriptor) => {
         if (parameters.name === 'notifications') {
-          return Promise.resolve({ state: 'prompt', onchange: null, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true } as PermissionStatus);
+          return Promise.resolve({ state: 'prompt' } as unknown as PermissionStatus);
         }
         return originalQuery(parameters);
       };
