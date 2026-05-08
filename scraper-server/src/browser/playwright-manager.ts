@@ -48,6 +48,11 @@ class PlaywrightBrowserPool {
           "--no-default-browser-check",
           "--password-store=basic",
           "--use-mock-keychain",
+          "--disable-background-timer-throttling",
+          "--disable-backgrounding-occluded-windows",
+          "--disable-renderer-backgrounding",
+          "--disable-features=TranslateUI",
+          "--disable-component-extensions-with-background-pages",
         ],
       });
       logger.info("Playwright browser launched");
@@ -70,6 +75,10 @@ class PlaywrightBrowserPool {
       viewport: { width: 1920, height: 1080 },
       locale: "en-US",
       timezoneId: "Europe/Brussels",
+      deviceScaleFactor: 1,
+      hasTouch: false,
+      isMobile: false,
+      javaScriptEnabled: true,
       extraHTTPHeaders: {
         "Accept-Language": "en-US,en;q=0.9,nl;q=0.8,fr;q=0.7",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -81,19 +90,30 @@ class PlaywrightBrowserPool {
         "Sec-Fetch-Site": "none",
         "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
       },
     });
 
     this.contexts.push(context);
     const page = await context.newPage();
     
-    // Inject anti-detection script
+    // Inject comprehensive anti-detection script
     await page.addInitScript(() => {
       // Override navigator.webdriver
       Object.defineProperty(navigator, 'webdriver', {
         get: () => undefined,
       });
-      
+
+      // Override chrome
+      Object.defineProperty(window, 'chrome', {
+        get: () => ({
+          runtime: {},
+          loadTimes: () => {},
+          csi: () => {},
+          app: {},
+        }),
+      });
+
       // Override permissions
       const originalQuery = window.navigator.permissions.query;
       window.navigator.permissions.query = (parameters: PermissionDescriptor) => {
@@ -102,16 +122,65 @@ class PlaywrightBrowserPool {
         }
         return originalQuery(parameters);
       };
-      
+
       // Override plugins
       Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
+        get: () => [
+          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+          { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+          { name: 'Native Client', filename: 'internal-nacl-plugin' },
+        ],
       });
-      
+
       // Override languages
       Object.defineProperty(navigator, 'languages', {
         get: () => ['en-US', 'en', 'nl', 'fr'],
       });
+
+      // Override notification
+      Object.defineProperty(window, 'Notification', {
+        get: () => ({
+          permission: 'default',
+          requestPermission: () => Promise.resolve('default'),
+        }),
+      });
+
+      // Override Webdriver
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+      });
+
+      // Add fake plugins length
+      Object.defineProperty(navigator, 'plugins', {
+        get: function() {
+          return { length: 3, item: () => null, namedItem: () => null };
+        },
+      });
+
+      // Override canvas - add noise
+      const originalGetContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(type: string) {
+        const context = originalGetContext.call(this, type);
+        if (context && type === '2d') {
+          const originalFillText = context.fillText;
+          context.fillText = function(...args: unknown[]) {
+            return originalFillText.apply(this, args);
+          };
+        }
+        return context;
+      };
+
+      // Override toString to hide tampering
+      const originalToString = Function.prototype.toString;
+      Function.prototype.toString = function() {
+        if (this === window.navigator.permissions.query) {
+          return 'function query() { [native code] }';
+        }
+        if (this === HTMLCanvasElement.prototype.getContext) {
+          return 'function getContext() { [native code] }';
+        }
+        return originalToString.call(this);
+      };
     });
     
     page.setDefaultTimeout(config.browser.timeout);
@@ -168,14 +237,16 @@ export async function handleCookieConsent(page: Page): Promise<void> {
     'button:has-text("Tout accepter")',
     'button:has-text("Accept all")',
     'button:has-text("Accepteer")',
+    '[class*="cookie-banner"] button',
+    '[id*="cookie"] button',
   ];
 
   for (const selector of consentSelectors) {
     try {
       const btn = page.locator(selector).first();
-      if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
         await btn.click();
-        await page.waitForTimeout(1500);
+        await page.waitForTimeout(1000);
         return;
       }
     } catch {}

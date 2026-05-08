@@ -32,7 +32,7 @@ export class ZimmoScraper extends BaseScraper {
       }
     });
     
-    await new Promise(r => setTimeout(r, 8000));
+    await new Promise(r => setTimeout(r, 10000));
     return listings;
   }
 
@@ -68,19 +68,27 @@ export class ZimmoScraper extends BaseScraper {
   }
 
   async extractListingsFromDom(page: Page): Promise<SearchResultItem[]> {
-    const selectors = [
+    const waitSelectors = [
       '.property-card',
       '.search-result',
       '.listing-item',
       '.result-item',
       '[data-testid="property"]',
+      'article',
       '[class*="card"]',
       '[class*="result"]',
-      'article',
       '[data-testid]',
     ];
 
-    for (const selector of selectors) {
+    for (const selector of waitSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 });
+        this.logger.info(`Content loaded with selector: ${selector}`);
+        break;
+      } catch {}
+    }
+
+    for (const selector of waitSelectors) {
       try {
         const count = await page.locator(selector).count();
         if (count > 0) {

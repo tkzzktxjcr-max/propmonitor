@@ -37,7 +37,7 @@ export class ImmowebScraper extends BaseScraper {
       }
     });
     
-    await new Promise(r => setTimeout(r, 8000));
+    await new Promise(r => setTimeout(r, 10000));
     return listings;
   }
 
@@ -82,21 +82,31 @@ export class ImmowebScraper extends BaseScraper {
   }
 
   async extractListingsFromDom(page: Page): Promise<SearchResultItem[]> {
-    // Try multiple known selectors
-    const selectors = [
+    // Wait for any of these selectors to appear
+    const waitSelectors = [
       'iw-search-card',
       '[data-testid="search-card"]',
       '.card--result',
       '.search-results__item',
       '.property-card',
       '.classified',
+      'article',
       '[class*="result"]',
       '[class*="card"]',
-      'article',
       '[data-testid]',
     ];
 
-    for (const selector of selectors) {
+    // Try waiting for content to load
+    for (const selector of waitSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 });
+        this.logger.info(`Content loaded with selector: ${selector}`);
+        break;
+      } catch {}
+    }
+
+    // Try multiple known selectors
+    for (const selector of waitSelectors) {
       try {
         const count = await page.locator(selector).count();
         if (count > 0) {

@@ -56,25 +56,42 @@ export abstract class BaseScraper {
     // Set up API interception before navigation
     const apiPromise = this.interceptApiListings(page).catch(() => [] as SearchResultItem[]);
     
-    // Use networkidle for better SPA support, with fallback to domcontentloaded
+    // Navigate with longer timeout
     try {
-      await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 90000 });
+      await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 120000 });
     } catch {
       this.logger.warn("networkidle timeout, falling back to domcontentloaded");
-      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+    }
+    
+    // Check for Cloudflare challenge
+    const isChallenge = await this.isCloudflareChallenge(page);
+    if (isChallenge) {
+      this.logger.warn("Cloudflare challenge detected, waiting...");
+      await page.waitForTimeout(15000);
+      // Try clicking the challenge checkbox if present
+      try {
+        const challengeCheckbox = page.locator('input[type="checkbox"]').first();
+        if (await challengeCheckbox.isVisible({ timeout: 5000 }).catch(() => false)) {
+          await challengeCheckbox.click();
+          await page.waitForTimeout(10000);
+        }
+      } catch {}
     }
     
     // Wait for initial render
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
     
     // Handle cookie consent
     const { handleCookieConsent } = await import("../browser/playwright-manager.js");
     await handleCookieConsent(page);
     
-    // Wait for content to settle and scroll to trigger lazy loading
-    await page.waitForTimeout(5000);
+    // Wait for content to settle
+    await page.waitForTimeout(8000);
+    
+    // Scroll to trigger lazy loading
     await scrollToBottom(page);
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
     
     // Try API interception first
     let listings = await apiPromise;
@@ -97,14 +114,28 @@ export abstract class BaseScraper {
     };
   }
 
+  private async isCloudflareChallenge(page: Page): Promise<boolean> {
+    try {
+      const title = await page.title();
+      const content = await page.content();
+      return title.includes("Just a moment") || 
+             content.includes("cf-browser-verification") ||
+             content.includes("challenge-platform") ||
+             content.includes("turnstile") ||
+             content.includes("Checking your browser");
+    } catch {
+      return false;
+    }
+  }
+
   async scrapeDetailPage(page: Page, detailUrl: string): Promise<Partial<PropertyData>> {
     this.logger.info(`Navigating to detail: ${detailUrl}`);
     try {
-      await page.goto(detailUrl, { waitUntil: "networkidle", timeout: 90000 });
+      await page.goto(detailUrl, { waitUntil: "networkidle", timeout: 120000 });
     } catch {
-      await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
     }
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(8000);
     return this.extractDetailFromDom(page);
   }
 }
