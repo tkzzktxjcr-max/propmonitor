@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   Play, 
   AlertCircle, 
@@ -8,12 +8,14 @@ import {
   Image,
   Bug,
   Globe,
-  RefreshCw
+  RefreshCw,
+  Server,
+  WifiOff,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { testScraper } from "@/lib/scraper-server";
+import { testScraper, checkScraperHealth } from "@/lib/scraper-server";
 import { showSuccess, showError } from "@/utils/toast";
 
 interface ScrapeTestResult {
@@ -45,8 +47,39 @@ const SOURCES = [
 export function ScraperDiagnostics() {
   const [isTesting, setIsTesting] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<Record<string, ScrapeTestResult>>({});
+  const [serverHealth, setServerHealth] = useState<{
+    status: "checking" | "online" | "offline";
+    message?: string;
+    version?: string;
+  }>({ status: "checking" });
+
+  useEffect(() => {
+    checkHealth();
+  }, []);
+
+  const checkHealth = async () => {
+    setServerHealth({ status: "checking" });
+    try {
+      const health = await checkScraperHealth();
+      setServerHealth({
+        status: "online",
+        message: `Server v${health.version} - Uptime: ${Math.floor(health.uptime / 60)}m`,
+        version: health.version,
+      });
+    } catch (error) {
+      setServerHealth({
+        status: "offline",
+        message: error instanceof Error ? error.message : "Server unreachable",
+      });
+    }
+  };
 
   const runTest = async (source: string) => {
+    if (serverHealth.status === "offline") {
+      showError("Scraper server is offline. Please check deployment.");
+      return;
+    }
+
     setIsTesting(prev => ({ ...prev, [source]: true }));
     
     try {
@@ -87,6 +120,10 @@ export function ScraperDiagnostics() {
   };
 
   const runAllTests = async () => {
+    if (serverHealth.status === "offline") {
+      showError("Cannot run tests - scraper server is offline");
+      return;
+    }
     for (const source of SOURCES) {
       await runTest(source.value);
     }
@@ -94,6 +131,35 @@ export function ScraperDiagnostics() {
 
   return (
     <div className="space-y-6">
+      {/* Server Health */}
+      <Card className={serverHealth.status === "online" ? "border-emerald-200 bg-emerald-50/30" : serverHealth.status === "offline" ? "border-red-200 bg-red-50/30" : ""}>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {serverHealth.status === "checking" ? (
+                <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+              ) : serverHealth.status === "online" ? (
+                <Server className="h-5 w-5 text-emerald-600" />
+              ) : (
+                <WifiOff className="h-5 w-5 text-red-600" />
+              )}
+              <div>
+                <p className="font-medium">
+                  Scraper Server: {serverHealth.status === "checking" ? "Checking..." : serverHealth.status === "online" ? "Online" : "Offline"}
+                </p>
+                {serverHealth.message && (
+                  <p className="text-sm text-slate-500">{serverHealth.message}</p>
+                )}
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={checkHealth} disabled={serverHealth.status === "checking"}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${serverHealth.status === "checking" ? "animate-spin" : ""}`} />
+              Check
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -105,7 +171,11 @@ export function ScraperDiagnostics() {
             Test scrapers and diagnose extraction issues
           </p>
         </div>
-        <Button onClick={runAllTests} variant="outline">
+        <Button 
+          onClick={runAllTests} 
+          variant="outline"
+          disabled={serverHealth.status === "offline" || serverHealth.status === "checking"}
+        >
           <Play className="h-4 w-4 mr-2" />
           Test All Sources
         </Button>
@@ -138,7 +208,7 @@ export function ScraperDiagnostics() {
               <CardContent className="space-y-4">
                 <Button 
                   onClick={() => runTest(source.value)} 
-                  disabled={isLoading}
+                  disabled={isLoading || serverHealth.status === "offline"}
                   className="w-full"
                   variant={result ? "outline" : "default"}
                 >
@@ -259,6 +329,7 @@ export function ScraperDiagnostics() {
             Troubleshooting Tips
           </h4>
           <ul className="space-y-1 text-sm text-blue-800">
+            <li>• If the server shows "Offline", check that the scraper server is deployed and running</li>
             <li>• If 0 listings are found, the site may be blocking headless browsers</li>
             <li>• Check the screenshot path on the server to see what the bot sees</li>
             <li>• Cookie consent banners can interfere with extraction</li>

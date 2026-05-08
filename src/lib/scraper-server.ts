@@ -68,6 +68,34 @@ export interface ScraperHealthResponse {
 }
 
 // ─────────────────────────────────────────────
+// HEALTH CHECK
+// ─────────────────────────────────────────────
+export async function checkScraperHealth(): Promise<ScraperHealthResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(`${SCRAPER_API_URL}/health`, {
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      throw new Error(`Scraper server health check failed: ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Scraper server is not responding (timeout)");
+    }
+    throw new Error(`Cannot connect to scraper server at ${SCRAPER_API_URL}. Is it running?`);
+  }
+}
+
+// ─────────────────────────────────────────────
 // TRIGGER SCRAPE
 // ─────────────────────────────────────────────
 export async function triggerScraper(params: {
@@ -75,63 +103,93 @@ export async function triggerScraper(params: {
   trigger: "manual" | "agent";
   filters?: Record<string, unknown>;
 }): Promise<ScraperJobResponse> {
-  const response = await fetch(`${SCRAPER_API_URL}/api/scrape`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Scraper server error: ${response.status} - ${error}`);
+  try {
+    const response = await fetch(`${SCRAPER_API_URL}/api/scrape`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Scraper server error: ${response.status} - ${error}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Request timed out. The scraper server may be overloaded.");
+    }
+    throw error;
   }
-
-  return response.json();
 }
 
 // ─────────────────────────────────────────────
 // CHECK JOB STATUS
 // ─────────────────────────────────────────────
 export async function checkJobStatus(jobId: string): Promise<ScraperJobStatus> {
-  const response = await fetch(`${SCRAPER_API_URL}/api/scrape/status/${jobId}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to get job status: ${response.status} - ${error}`);
+  try {
+    const response = await fetch(`${SCRAPER_API_URL}/api/scrape/status/${jobId}`, {
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to get job status: ${response.status} - ${error}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeout);
+    throw error;
   }
-
-  return response.json();
-}
-
-// ─────────────────────────────────────────────
-// CHECK SCRAPER HEALTH
-// ─────────────────────────────────────────────
-export async function checkScraperHealth(): Promise<ScraperHealthResponse> {
-  const response = await fetch(`${SCRAPER_API_URL}/health`);
-
-  if (!response.ok) {
-    throw new Error(`Scraper server health check failed: ${response.status}`);
-  }
-
-  return response.json();
 }
 
 // ─────────────────────────────────────────────
 // TEST SCRAPE
 // ─────────────────────────────────────────────
 export async function testScraper(source: string, filters?: Record<string, unknown>): Promise<TestScrapeResponse> {
-  const response = await fetch(`${SCRAPER_API_URL}/api/scrape/test`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source, filters }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Test scrape failed: ${response.status} - ${error}`);
+  try {
+    const response = await fetch(`${SCRAPER_API_URL}/api/scrape/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, filters }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Test scrape failed: ${response.status} - ${error}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Test scrape timed out after 2 minutes");
+    }
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error(`Cannot connect to scraper server at ${SCRAPER_API_URL}. Please check that the server is deployed and running.`);
+    }
+    throw error;
   }
-
-  return response.json();
 }
 
 // ─────────────────────────────────────────────
