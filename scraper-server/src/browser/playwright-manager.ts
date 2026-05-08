@@ -157,27 +157,11 @@ class PlaywrightBrowserPool {
         },
       });
 
-      // Override canvas - add noise
-      const originalGetContext = HTMLCanvasElement.prototype.getContext;
-      HTMLCanvasElement.prototype.getContext = function(type: string) {
-        const context = originalGetContext.call(this, type);
-        if (context && type === '2d') {
-          const originalFillText = context.fillText;
-          context.fillText = function(...args: unknown[]) {
-            return originalFillText.apply(this, args);
-          };
-        }
-        return context;
-      };
-
       // Override toString to hide tampering
       const originalToString = Function.prototype.toString;
       Function.prototype.toString = function() {
         if (this === window.navigator.permissions.query) {
           return 'function query() { [native code] }';
-        }
-        if (this === HTMLCanvasElement.prototype.getContext) {
-          return 'function getContext() { [native code] }';
         }
         return originalToString.call(this);
       };
