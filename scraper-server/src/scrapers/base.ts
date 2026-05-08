@@ -48,53 +48,42 @@ export abstract class BaseScraper {
   abstract buildSearchUrl(filters?: ScraperFilters): string;
   abstract extractListingsFromDom(page: Page): Promise<SearchResultItem[]>;
   abstract extractDetailFromDom(page: Page): Promise<Partial<PropertyData>>;
-  abstract interceptApiListings(page: Page): Promise<SearchResultItem[]>;
+  abstract interceptApiListings(page: Page, timeoutMs?: number): Promise<SearchResultItem[]>;
 
   async scrapeSearchPage(page: Page, searchUrl: string): Promise<ScrapeResult> {
     this.logger.info(`Navigating to: ${searchUrl}`);
     
-    // Set up API interception before navigation
-    const apiPromise = this.interceptApiListings(page).catch(() => [] as SearchResultItem[]);
-    
-    // Navigate with longer timeout
+    // Navigate first
     try {
-      await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 120000 });
-    } catch {
-      this.logger.warn("networkidle timeout, falling back to domcontentloaded");
-      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    } catch (error) {
+      this.logger.warn("Initial navigation timeout", { error: error instanceof Error ? error.message : String(error) });
+      await page.goto(searchUrl, { waitUntil: "commit", timeout: 60000 });
     }
     
-    // Check for Cloudflare challenge
-    const isChallenge = await this.isCloudflareChallenge(page);
-    if (isChallenge) {
-      this.logger.warn("Cloudflare challenge detected, waiting...");
-      await page.waitForTimeout(15000);
-      // Try clicking the challenge checkbox if present
-      try {
-        const challengeCheckbox = page.locator('input[type="checkbox"]').first();
-        if (await challengeCheckbox.isVisible({ timeout: 5000 }).catch(() => false)) {
-          await challengeCheckbox.click();
-          await page.waitForTimeout(10000);
-        }
-      } catch {}
+    // Check for blocking
+    const isBlocked = await this.isBlocked(page);
+    if (isBlocked) {
+      this.logger.warn("Page appears to be blocked, waiting extra time...");
+      await page.waitForTimeout(20000);
+      
+      // Try to handle any challenge
+      await this.handleChallenge(page);
     }
-    
-    // Wait for initial render
-    await page.waitForTimeout(5000);
     
     // Handle cookie consent
     const { handleCookieConsent } = await import("../browser/playwright-manager.js");
     await handleCookieConsent(page);
     
     // Wait for content to settle
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(5000);
     
     // Scroll to trigger lazy loading
     await scrollToBottom(page);
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(3000);
     
-    // Try API interception first
-    let listings = await apiPromise;
+    // Try API interception - set up listener NOW and wait for responses
+    let listings = await this.interceptApiListings(page, 8000);
     this.logger.info(`API interception found ${listings.length} listings`);
     
     // Fallback to DOM extraction
@@ -106,6 +95,11 @@ export abstract class BaseScraper {
     if (listings.length === 0) {
       const screenshotPath = await takeDebugScreenshot(page, `${this.siteSlug}-search-empty`);
       this.logger.warn(`0 listings found, screenshot saved: ${screenshotPath}`);
+      
+      // Log page info for debugging
+      const title = await page.title().catch(() => "unknown");
+      const url = page.url();
+      this.logger.warn(`Page debug info`, { title, url });
     }
     
     return {
@@ -114,28 +108,44 @@ export abstract class BaseScraper {
     };
   }
 
-  private async isCloudflareChallenge(page: Page): Promise<boolean> {
+  private async isBlocked(page: Page): Promise<boolean> {
     try {
       const title = await page.title();
       const content = await page.content();
       return title.includes("Just a moment") || 
+             title.includes("Access Denied") ||
+             title.includes("Forbidden") ||
              content.includes("cf-browser-verification") ||
              content.includes("challenge-platform") ||
              content.includes("turnstile") ||
-             content.includes("Checking your browser");
+             content.includes("Checking your browser") ||
+             content.includes("blocked") ||
+             content.includes("robot") ||
+             content.includes("captcha");
     } catch {
       return false;
     }
   }
 
+  private async handleChallenge(page: Page): Promise<void> {
+    try {
+      // Try to click any checkbox (Cloudflare challenge)
+      const checkbox = page.locator('input[type="checkbox"]').first();
+      if (await checkbox.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await checkbox.click();
+        await page.waitForTimeout(15000);
+      }
+    } catch {}
+  }
+
   async scrapeDetailPage(page: Page, detailUrl: string): Promise<Partial<PropertyData>> {
     this.logger.info(`Navigating to detail: ${detailUrl}`);
     try {
-      await page.goto(detailUrl, { waitUntil: "networkidle", timeout: 120000 });
+      await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     } catch {
-      await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
+      await page.goto(detailUrl, { waitUntil: "commit", timeout: 60000 });
     }
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(5000);
     return this.extractDetailFromDom(page);
   }
 }

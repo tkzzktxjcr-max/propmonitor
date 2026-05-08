@@ -15,24 +15,34 @@ export class ZimmoScraper extends BaseScraper {
     return url;
   }
 
-  async interceptApiListings(page: Page): Promise<SearchResultItem[]> {
+  async interceptApiListings(page: Page, timeoutMs: number = 8000): Promise<SearchResultItem[]> {
     const listings: SearchResultItem[] = [];
+    const seenIds = new Set<string>();
     
-    page.on("response", async (response) => {
+    const handler = async (response: any) => {
       const url = response.url();
-      if (url.includes("zimmo.be") && (url.includes("/search/") || url.includes("/api/") || url.includes("/listings/"))) {
-        try {
-          const contentType = response.headers()["content-type"] || "";
-          if (contentType.includes("application/json")) {
-            const data = await response.json();
-            const items = this.parseApiResponse(data);
-            listings.push(...items);
+      if (!url.includes("zimmo.be")) return;
+      if (!url.includes("/search/") && !url.includes("/api/") && !url.includes("/listings/")) return;
+      
+      try {
+        const contentType = response.headers()["content-type"] || "";
+        if (!contentType.includes("application/json")) return;
+        
+        const data = await response.json();
+        const items = this.parseApiResponse(data);
+        
+        for (const item of items) {
+          if (!seenIds.has(item.source_id)) {
+            seenIds.add(item.source_id);
+            listings.push(item);
           }
-        } catch {}
-      }
-    });
+        }
+      } catch {}
+    };
     
-    await new Promise(r => setTimeout(r, 10000));
+    page.on("response", handler);
+    await new Promise(r => setTimeout(r, timeoutMs));
+    page.off("response", handler);
     return listings;
   }
 
@@ -40,7 +50,7 @@ export class ZimmoScraper extends BaseScraper {
     const listings: SearchResultItem[] = [];
     try {
       const d = data as Record<string, unknown>;
-      const results = d.results || d.items || d.data || d.listings || [];
+      const results = d.results || d.items || d.data || d.listings || d.properties || [];
       const items = Array.isArray(results) ? results : [];
       
       for (const item of items) {
@@ -68,7 +78,7 @@ export class ZimmoScraper extends BaseScraper {
   }
 
   async extractListingsFromDom(page: Page): Promise<SearchResultItem[]> {
-    const waitSelectors = [
+    const contentSelectors = [
       '.property-card',
       '.search-result',
       '.listing-item',
@@ -78,25 +88,25 @@ export class ZimmoScraper extends BaseScraper {
       '[class*="card"]',
       '[class*="result"]',
       '[data-testid]',
+      '.listing',
     ];
 
-    for (const selector of waitSelectors) {
+    let foundSelector = null;
+    for (const selector of contentSelectors) {
       try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        this.logger.info(`Content loaded with selector: ${selector}`);
-        break;
+        await page.waitForSelector(selector, { timeout: 10000 });
+        const count = await page.locator(selector).count();
+        if (count > 0) {
+          foundSelector = selector;
+          this.logger.info(`Content loaded with selector: ${selector} (${count} items)`);
+          break;
+        }
       } catch {}
     }
 
-    for (const selector of waitSelectors) {
-      try {
-        const count = await page.locator(selector).count();
-        if (count > 0) {
-          this.logger.info(`Found ${count} cards with selector: ${selector}`);
-          const results = await this.extractWithSelector(page, selector);
-          if (results.length > 0) return results;
-        }
-      } catch {}
+    if (foundSelector) {
+      const results = await this.extractWithSelector(page, foundSelector);
+      if (results.length > 0) return results;
     }
 
     return page.evaluate(() => {
@@ -110,12 +120,12 @@ export class ZimmoScraper extends BaseScraper {
         if (seen.has(href)) return;
         seen.add(href);
         
-        const container = link.closest('article, .card, .item, .result') || link.parentElement;
+        const container = link.closest('article, .card, .item, .result, .listing') || link.parentElement;
         const title = container?.querySelector('h2, h3, .title')?.textContent?.trim() 
           || link.getAttribute('title') 
           || "";
         
-        const priceText = container?.querySelector('.price')?.textContent?.trim() || "";
+        const priceText = container?.querySelector('.price, .property-price')?.textContent?.trim() || "";
         const price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
         
         const idMatch = href.match(/(\d{6,})/);
@@ -138,7 +148,7 @@ export class ZimmoScraper extends BaseScraper {
         const idMatch = url.match(/(\d{6,})/);
         const source_id = idMatch ? idMatch[1] : "";
         const title = card.querySelector('h2, h3, .title')?.textContent?.trim() || "";
-        const priceText = card.querySelector('.price')?.textContent?.trim() || "";
+        const priceText = card.querySelector('.price, .property-price')?.textContent?.trim() || "";
         const price = parseInt(priceText.replace(/[^\d]/g, '')) || 0;
         const city = card.querySelector('.location, .city')?.textContent?.trim() || "";
         
