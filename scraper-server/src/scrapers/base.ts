@@ -56,17 +56,25 @@ export abstract class BaseScraper {
     // Set up API interception before navigation
     const apiPromise = this.interceptApiListings(page).catch(() => [] as SearchResultItem[]);
     
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForTimeout(2000);
+    // Use networkidle for better SPA support, with fallback to domcontentloaded
+    try {
+      await page.goto(searchUrl, { waitUntil: "networkidle", timeout: 90000 });
+    } catch {
+      this.logger.warn("networkidle timeout, falling back to domcontentloaded");
+      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    }
+    
+    // Wait for initial render
+    await page.waitForTimeout(3000);
     
     // Handle cookie consent
     const { handleCookieConsent } = await import("../browser/playwright-manager.js");
     await handleCookieConsent(page);
     
-    // Wait for content and scroll
-    await page.waitForTimeout(3000);
+    // Wait for content to settle and scroll to trigger lazy loading
+    await page.waitForTimeout(5000);
     await scrollToBottom(page);
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     
     // Try API interception first
     let listings = await apiPromise;
@@ -91,8 +99,12 @@ export abstract class BaseScraper {
 
   async scrapeDetailPage(page: Page, detailUrl: string): Promise<Partial<PropertyData>> {
     this.logger.info(`Navigating to detail: ${detailUrl}`);
-    await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForTimeout(3000);
+    try {
+      await page.goto(detailUrl, { waitUntil: "networkidle", timeout: 90000 });
+    } catch {
+      await page.goto(detailUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    }
+    await page.waitForTimeout(5000);
     return this.extractDetailFromDom(page);
   }
 }

@@ -32,7 +32,7 @@ export class ImmovlanScraper extends BaseScraper {
       }
     });
     
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 8000));
     return listings;
   }
 
@@ -76,14 +76,19 @@ export class ImmovlanScraper extends BaseScraper {
       '[data-testid="property"]',
       '[class*="card"]',
       '[class*="result"]',
+      'article',
+      '[data-testid]',
     ];
 
     for (const selector of selectors) {
-      const count = await page.locator(selector).count();
-      if (count > 0) {
-        this.logger.info(`Found ${count} cards with selector: ${selector}`);
-        return this.extractWithSelector(page, selector);
-      }
+      try {
+        const count = await page.locator(selector).count();
+        if (count > 0) {
+          this.logger.info(`Found ${count} cards with selector: ${selector}`);
+          const results = await this.extractWithSelector(page, selector);
+          if (results.length > 0) return results;
+        }
+      } catch {}
     }
 
     return page.evaluate(() => {

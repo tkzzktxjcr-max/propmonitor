@@ -165,14 +165,17 @@ export async function handleCookieConsent(page: Page): Promise<void> {
     'button:has-text("Akkoord")',
     'button:has-text("I agree")',
     'button:has-text("Allow")',
+    'button:has-text("Tout accepter")',
+    'button:has-text("Accept all")',
+    'button:has-text("Accepteer")',
   ];
 
   for (const selector of consentSelectors) {
     try {
       const btn = page.locator(selector).first();
-      if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
         await btn.click();
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(1500);
         return;
       }
     } catch {}

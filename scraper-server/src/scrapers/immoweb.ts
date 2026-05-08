@@ -1,6 +1,6 @@
 import { Page } from "playwright";
 import { BaseScraper, JobLogger, SearchResultItem, ScraperFilters } from "./base.js";
-import { cleanString, cleanNumber, cleanInt, normalizePropertyType } from "../utils/validation.js";
+import { normalizePropertyType } from "../utils/validation.js";
 import { PropertyData } from "../appwrite/client.js";
 
 export class ImmowebScraper extends BaseScraper {
@@ -37,8 +37,7 @@ export class ImmowebScraper extends BaseScraper {
       }
     });
     
-    // Wait a bit for API calls
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 8000));
     return listings;
   }
 
@@ -55,7 +54,6 @@ export class ImmowebScraper extends BaseScraper {
         const url = String(i.url || i.permalink || i.detailUrl || "");
         const title = String(i.title || (i.property as Record<string, unknown>)?.title || i.description || "");
         
-        // Safely extract price from nested transaction object
         let price = 0;
         const transaction = i.transaction as Record<string, unknown> | undefined;
         if (transaction) {
@@ -94,14 +92,19 @@ export class ImmowebScraper extends BaseScraper {
       '.classified',
       '[class*="result"]',
       '[class*="card"]',
+      'article',
+      '[data-testid]',
     ];
 
     for (const selector of selectors) {
-      const count = await page.locator(selector).count();
-      if (count > 0) {
-        this.logger.info(`Found ${count} cards with selector: ${selector}`);
-        return this.extractWithSelector(page, selector);
-      }
+      try {
+        const count = await page.locator(selector).count();
+        if (count > 0) {
+          this.logger.info(`Found ${count} cards with selector: ${selector}`);
+          const results = await this.extractWithSelector(page, selector);
+          if (results.length > 0) return results;
+        }
+      } catch {}
     }
 
     // Ultimate fallback: any link containing /classified/
