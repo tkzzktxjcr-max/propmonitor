@@ -29,10 +29,13 @@ interface ScrapeTriggerProps {
   isLoading?: boolean;
 }
 
-const sources: { value: PropertySource; label: string; description: string }[] = [
-  { value: "immoweb", label: "Immoweb", description: "Belgium's largest property platform" },
-  { value: "immovlan", label: "Immovlan", description: "Comprehensive real estate listings" },
-  { value: "zimmo", label: "Zimmo", description: "Modern property search platform" },
+const sources: { value: PropertySource; label: string; description: string; badge?: string }[] = [
+  { value: "immoweb", label: "Immoweb", description: "Belgium's largest (requires proxy)", badge: "Blocked" },
+  { value: "immovlan", label: "Immovlan", description: "~47K listings via sitemap", badge: "HTTP" },
+  { value: "zimmo", label: "Zimmo", description: "Modern property search (requires proxy)", badge: "Blocked" },
+  { value: "era", label: "ERA", description: "Agency network, sitemap-based", badge: "HTTP" },
+  { value: "immotop", label: "Immotop", description: "Belgian property listings", badge: "HTTP" },
+  { value: "othersite", label: "Other", description: "Custom source" },
 ];
 
 export function ScrapeTrigger({ onTrigger, isLoading }: ScrapeTriggerProps) {

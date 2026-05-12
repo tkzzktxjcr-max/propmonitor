@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────────
+# PROP MONITOR - Docker Compose for Coolify
+# ─────────────────────────────────────────────
+
+services:
+  propmonitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: propmonitor
+    restart: unless-stopped
+    ports:
+      - "5173:8080"
+    environment:
+      - VITE_APPWRITE_ENDPOINT=${VITE_APPWRITE_ENDPOINT:-https://backend.071098v2.duckdns.org/v1}
+      - VITE_APPWRITE_PROJECT_ID=${VITE_APPWRITE_PROJECT_ID:-propertymonitor}
+      - VITE_APPWRITE_DATABASE_ID=${VITE_APPWRITE_DATABASE_ID:-belrealty-db}
+      - VITE_APPWRITE_API_KEY=${VITE_APPWRITE_API_KEY:-}
+      - VITE_SCRAPER_API_URL=${VITE_SCRAPER_API_URL:-https://scrap.071098v2.duckdns.org}
+      - VITE_DEMO_MODE=${VITE_DEMO_MODE:-false}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: propmonitor-network

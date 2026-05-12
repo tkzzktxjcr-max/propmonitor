@@ -72,7 +72,7 @@ export interface ScrapingLog {
 // ─────────────────────────────────────────────
 // COLLECTION: properties
 // ─────────────────────────────────────────────
-export type PropertySource = "immoweb" | "immovlan" | "zimmo" | "othersite";
+export type PropertySource = "immoweb" | "immovlan" | "zimmo" | "era" | "immotop" | "othersite";
 export type PropertyType = "apartment" | "house" | "villa" | "studio" | "commercial";
 export type EnergyRating = "A" | "B" | "C" | "D" | "E" | "F" | "G";
 

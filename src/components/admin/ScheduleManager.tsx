@@ -76,6 +76,8 @@ const SITES = [
   { value: "immoweb", label: "Immoweb" },
   { value: "immovlan", label: "Immovlan" },
   { value: "zimmo", label: "Zimmo" },
+  { value: "era", label: "ERA" },
+  { value: "immotop", label: "Immotop" },
 ];
 
 export function ScheduleManager() {
