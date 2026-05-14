@@ -1,4 +1,5 @@
 import { Client, Account, Databases, Functions, Storage, Teams, ID, Query } from "appwrite";
+import { installQueryPatch } from "./query-patch.js";
 
 // ─────────────────────────────────────────────
 // APPWRITE SELF-HOSTED CONFIGURATION
@@ -24,6 +25,9 @@ export const COLLECTION_SCHEDULES = "schedules";
 export const client = new Client()
   .setEndpoint(APPWRITE_ENDPOINT)
   .setProject(APPWRITE_PROJECT_ID);
+
+// Patch queries for Appwrite 1.7.x compatibility
+installQueryPatch();
 
 // ─────────────────────────────────────────────
 // SERVICES
